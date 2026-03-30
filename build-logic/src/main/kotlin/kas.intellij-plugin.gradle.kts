@@ -14,8 +14,8 @@ tasks.withType<Test>().configureEach {
 intellijPlatform {
     pluginConfiguration {
         ideaVersion {
-            sinceBuild = "261"
-            untilBuild = "261.*"
+            sinceBuild = "253"
+            untilBuild = "253.*"
         }
     }
 }

@@ -19,7 +19,7 @@ dependencies {
     testImplementation(project(":shared-testing"))
 
     intellijPlatform {
-        intellijIdea("2026.1")
+        intellijIdea("2025.3")
         bundledPlugin("com.intellij.java")
         bundledPlugin("org.jetbrains.kotlin")
         testFramework(TestFrameworkType.Platform)
