@@ -144,6 +144,7 @@ dependencies {
     implementation(libs.analysis.api.standalone) {
         isTransitive = false
     }
+    implementation(libs.gradle.tooling.api)
     // compat JAR FIRST — wins the class-loading race for old-API classes
     implementation(files(buildIdeCompatJar.map { it.archiveFile }))
     implementation(ideaLibs)

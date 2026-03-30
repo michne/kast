@@ -8,6 +8,7 @@ slf4j = "2.0.17"
 logback = "1.5.18"
 intellij-platform-gradle-plugin = "2.13.1"
 analysis-api-standalone = "2.3.20-ij253-87"
+gradle-tooling-api = "9.0.0"
 
 [libraries]
 coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -27,6 +28,7 @@ analysis-api-standalone = { module = "org.jetbrains.kotlin:analysis-api-standalo
 analysis-api-ide = { module = "org.jetbrains.kotlin:analysis-api-for-ide", version.ref = "analysis-api-standalone" }
 analysis-api-k2-ide = { module = "org.jetbrains.kotlin:analysis-api-k2-for-ide", version.ref = "analysis-api-standalone" }
 analysis-api-impl-base-ide = { module = "org.jetbrains.kotlin:analysis-api-impl-base-for-ide", version.ref = "analysis-api-standalone" }
+gradle-tooling-api = { module = "org.gradle:gradle-tooling-api", version.ref = "gradle-tooling-api" }
 
 [bundles]
 ktor-server = [

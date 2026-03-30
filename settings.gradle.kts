@@ -9,6 +9,7 @@ includeBuild("build-logic")
 dependencyResolutionManagement {
     repositories {
         mavenCentral()
+        maven("https://repo.gradle.org/gradle/libs-releases")
         maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
         maven("https://www.jetbrains.com/intellij-repository/releases")
     }
