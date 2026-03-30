@@ -38,12 +38,16 @@ import kotlin.io.path.writeText
 class FakeAnalysisBackend private constructor(
     private val workspaceRoot: Path,
     private val symbol: Symbol,
-    private val declarationOffset: Int,
-    private val referenceOffset: Int,
+    private val symbolAnchors: List<Location>,
+    private val referenceLocations: List<Location>,
+    private val diagnosticsByFile: Map<String, List<Diagnostic>>,
     private val limits: ServerLimits,
     private val backendName: String,
 ) : AnalysisBackend {
-    private val filePath: String = symbol.location.filePath
+    private val availableFiles: Set<String> = buildSet {
+        addAll(symbolAnchors.map(Location::filePath))
+        addAll(diagnosticsByFile.keys)
+    }
 
     override suspend fun capabilities(): BackendCapabilities = BackendCapabilities(
         backendName = backendName,
@@ -72,38 +76,29 @@ class FakeAnalysisBackend private constructor(
     }
 
     override suspend fun resolveSymbol(query: SymbolQuery): SymbolResult {
-        requireFile(query.position)
-        return when (query.position.offset) {
-            in declarationOffset until declarationOffset + symbol.location.endOffset - symbol.location.startOffset -> SymbolResult(symbol)
-            in referenceOffset until referenceOffset + symbol.location.endOffset - symbol.location.startOffset -> SymbolResult(symbol)
-            else -> throw NotFoundException(
-                message = "No symbol was found at the requested offset",
-                details = mapOf("offset" to query.position.offset.toString()),
-            )
-        }
+        requireAnchor(query.position)
+        return SymbolResult(symbol)
     }
 
     override suspend fun findReferences(query: ReferencesQuery): ReferencesResult {
-        requireFile(query.position)
-        if (query.position.offset !in declarationOffset..referenceOffset + 1) {
-            throw NotFoundException("No references were found for the requested symbol")
-        }
+        requireAnchor(query.position)
 
         val declaration = if (query.includeDeclaration) symbol else null
         return ReferencesResult(
             declaration = declaration,
-            references = listOf(referenceLocation(filePath, referenceOffset)),
+            references = referenceLocations,
         )
     }
 
     override suspend fun callHierarchy(query: CallHierarchyQuery): CallHierarchyResult {
-        requireFile(query.position)
+        requireAnchor(query.position)
+        val outgoingReference = referenceLocations.firstOrNull() ?: symbol.location
         val child = if (query.direction == CallDirection.OUTGOING) {
             CallNode(
                 symbol = Symbol(
                     fqName = "sample.use",
                     kind = SymbolKind.FUNCTION,
-                    location = referenceLocation(filePath, referenceOffset),
+                    location = outgoingReference,
                 ),
                 children = emptyList(),
             )
@@ -117,47 +112,65 @@ class FakeAnalysisBackend private constructor(
     }
 
     override suspend fun diagnostics(query: DiagnosticsQuery): DiagnosticsResult {
-        query.filePaths.forEach { requireFile(FilePosition(it, 0)) }
+        query.filePaths.forEach(::requireKnownFile)
         return DiagnosticsResult(
-            diagnostics = emptyList<Diagnostic>(),
+            diagnostics = query.filePaths
+                .flatMap { filePath -> diagnosticsByFile[filePath].orEmpty() }
+                .sortedWith(compareBy({ it.location.filePath }, { it.location.startOffset })),
         )
     }
 
     override suspend fun rename(query: RenameQuery): RenameResult {
-        requireFile(query.position)
-        val content = Files.readString(Path.of(filePath))
-        val declarationEdit = TextEdit(
-            filePath = filePath,
-            startOffset = declarationOffset,
-            endOffset = declarationOffset + "greet".length,
-            newText = query.newName,
-        )
-        val referenceEdit = TextEdit(
-            filePath = filePath,
-            startOffset = referenceOffset,
-            endOffset = referenceOffset + "greet".length,
-            newText = query.newName,
-        )
+        requireAnchor(query.position)
+        val edits = symbolAnchors
+            .map { anchor ->
+                TextEdit(
+                    filePath = anchor.filePath,
+                    startOffset = anchor.startOffset,
+                    endOffset = anchor.endOffset,
+                    newText = query.newName,
+                )
+            }
+            .distinctBy { edit -> Triple(edit.filePath, edit.startOffset, edit.endOffset) }
+            .sortedWith(compareBy({ it.filePath }, { it.startOffset }))
+        val affectedFiles = edits.map(TextEdit::filePath).distinct()
 
         return RenameResult(
-            edits = listOf(declarationEdit, referenceEdit),
-            fileHashes = listOf(
+            edits = edits,
+            fileHashes = affectedFiles.map { filePath ->
                 FileHash(
                     filePath = filePath,
-                    hash = FileHashing.sha256(content),
-                ),
-            ),
-            affectedFiles = listOf(filePath),
+                    hash = FileHashing.sha256(Files.readString(Path.of(filePath))),
+                )
+            },
+            affectedFiles = affectedFiles,
         )
     }
 
     override suspend fun applyEdits(query: ApplyEditsQuery): ApplyEditsResult = LocalDiskEditApplier.apply(query)
 
-    private fun requireFile(position: FilePosition) {
-        if (position.filePath != filePath) {
+    private fun requireAnchor(position: FilePosition) {
+        requireKnownFile(position.filePath)
+        val matchingAnchor = symbolAnchors.any { anchor ->
+            anchor.filePath == position.filePath &&
+                position.offset in anchor.startOffset until anchor.endOffset
+        }
+        if (!matchingAnchor) {
             throw NotFoundException(
-                message = "The fake backend only exposes its fixture file",
-                details = mapOf("filePath" to position.filePath),
+                message = "No symbol was found at the requested offset",
+                details = mapOf(
+                    "filePath" to position.filePath,
+                    "offset" to position.offset.toString(),
+                ),
+            )
+        }
+    }
+
+    private fun requireKnownFile(filePath: String) {
+        if (filePath !in availableFiles) {
+            throw NotFoundException(
+                message = "The fake backend only exposes its fixture files",
+                details = mapOf("filePath" to filePath),
             )
         }
     }
@@ -187,6 +200,7 @@ class FakeAnalysisBackend private constructor(
             val declarationOffset = content.indexOf("greet")
             val referenceOffset = content.lastIndexOf("greet")
             val symbolLocation = referenceLocation(file.toString(), declarationOffset)
+            val referenceLocation = referenceLocation(file.toString(), referenceOffset)
             val symbol = Symbol(
                 fqName = "sample.greet",
                 kind = SymbolKind.FUNCTION,
@@ -197,8 +211,56 @@ class FakeAnalysisBackend private constructor(
             return FakeAnalysisBackend(
                 workspaceRoot = workspaceRoot,
                 symbol = symbol,
-                declarationOffset = declarationOffset,
-                referenceOffset = referenceOffset,
+                symbolAnchors = listOf(symbolLocation, referenceLocation),
+                referenceLocations = listOf(referenceLocation),
+                diagnosticsByFile = emptyMap(),
+                limits = limits,
+                backendName = backendName,
+            )
+        }
+
+        fun contractFixture(
+            fixture: AnalysisBackendContractFixture,
+            limits: ServerLimits = ServerLimits(
+                maxResults = 100,
+                requestTimeoutMillis = 30_000,
+                maxConcurrentRequests = 4,
+            ),
+            backendName: String = "fake",
+        ): FakeAnalysisBackend {
+            val symbol = Symbol(
+                fqName = fixture.symbolFqName,
+                kind = SymbolKind.FUNCTION,
+                location = fixture.declarationLocation,
+                containingDeclaration = "sample",
+            )
+
+            return FakeAnalysisBackend(
+                workspaceRoot = fixture.workspaceRoot,
+                symbol = symbol,
+                symbolAnchors = listOf(
+                    fixture.declarationLocation,
+                    fixture.firstUsageLocation,
+                    fixture.secondUsageLocation,
+                ),
+                referenceLocations = fixture.referenceLocations,
+                diagnosticsByFile = mapOf(
+                    fixture.brokenFile.toString() to listOf(
+                        Diagnostic(
+                            location = Location(
+                                filePath = fixture.brokenFile.toString(),
+                                startOffset = 0,
+                                endOffset = 0,
+                                startLine = 3,
+                                startColumn = 1,
+                                preview = fixture.brokenPreview,
+                            ),
+                            severity = DiagnosticSeverity.ERROR,
+                            message = "The fake contract fixture reports a syntax error",
+                            code = "FAKE_PARSE_ERROR",
+                        ),
+                    ),
+                ),
                 limits = limits,
                 backendName = backendName,
             )

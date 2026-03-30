@@ -8,25 +8,10 @@ icon: lucide/construction
 # Remaining work
 
 This page lists the implementation areas that remain incomplete after the
-initial ADR-001 bootstrap. The build is green, packaging works, and the repo
-structure is in place, but several backend, verification, and hardening tasks
+initial ADR-001 bootstrap. The verification baseline now covers shared contract
+fixtures, standalone bootstrap and packaging smoke checks, and operator
+documentation for real repositories, but several backend and hardening tasks
 still need completion before the system has the intended production shape.
-
-## Standalone semantic backend
-
-The standalone backend currently exists as a runnable scaffold, not as a real
-Kotlin semantic analysis engine.
-
-- **Status:** Scaffolded only
-- **Current state:** `StandaloneAnalysisBackend` advertises no read
-  capabilities and only `APPLY_EDITS`
-- **Where:** `backend-standalone/src/main/kotlin/io/github/amichne/kast/standalone/StandaloneAnalysisBackend.kt`
-- **Missing:** `resolveSymbol`, `findReferences`, `diagnostics`,
-  `callHierarchy`, and `rename`
-- **Impact:** The standalone process can start and apply prepared edits, but it
-  cannot perform semantic analysis or mutation planning in CI
-- **Next step:** Restore a resolvable Kotlin Analysis API dependency set, open
-  a real workspace session, and implement the read and rename paths
 
 ## Call hierarchy support
 
@@ -122,35 +107,3 @@ stronger network safety policy from the plan.
   code
 - **Next step:** Validate `host` and `token` at startup and fail fast for unsafe
   configurations
-
-## Test coverage
-
-The current test suite verifies the transport bootstrap and descriptor-file
-workflow, but it does not yet verify the deeper semantic behavior the plan
-calls for.
-
-- **Status:** Thin bootstrap coverage only
-- **Current state:** Tests cover the HTTP surface and descriptor store
-- **Where:** `analysis-server/src/test/kotlin/io/github/amichne/kast/server/AnalysisApplicationTest.kt`,
-  `analysis-server/src/test/kotlin/io/github/amichne/kast/server/DescriptorStoreTest.kt`
-- **Missing:** Golden fixture projects, shared contract tests against real
-  backends, rename edge-case coverage, and backend-specific integration tests
-- **Impact:** The build proves transport behavior and packaging, not semantic
-  correctness across real projects
-- **Next step:** Add fixture projects and run the same assertions against fake,
-  IntelliJ, and standalone implementations
-
-## CI and release verification
-
-The repo currently relies on manual Gradle execution for verification. That is
-acceptable for bootstrap, but not for sustained development.
-
-- **Status:** Not implemented
-- **Current state:** No CI or release workflow files exist in the repo
-- **Where:** Repo root
-- **Missing:** Automated Linux and macOS smoke tests, plugin verifier runs,
-  artifact-content checks, and packaging checks
-- **Impact:** Packaging or compatibility regressions will only be caught by
-  local manual runs
-- **Next step:** Add CI pipelines for tests, standalone launch smoke tests,
-  IntelliJ plugin verification, and artifact inspection

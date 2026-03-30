@@ -64,7 +64,7 @@ important distinction is what each host advertises right now.
 | Host | Intended use | Current capabilities |
 | --- | --- | --- |
 | IntelliJ plugin | Local development | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
-| Standalone process | CI and headless workflows | `APPLY_EDITS` |
+| Standalone process | CI and headless workflows | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
 
 > **Note:** The `/api/v1/call-hierarchy` route exists, but no production
 > backend advertises `CALL_HIERARCHY` yet.

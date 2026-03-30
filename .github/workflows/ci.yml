@@ -1,0 +1,282 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  standalone-smoke:
+    name: Standalone smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build standalone backend
+        run: >
+          ./gradlew
+          :shared-testing:test
+          :backend-standalone:test
+          :backend-standalone:fatJar
+          :backend-standalone:writeWrapperScript
+
+      - name: Check standalone artifacts
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          script = Path("backend-standalone/build/scripts/backend-standalone")
+          if not script.exists():
+              raise SystemExit("wrapper script was not created")
+          if script.stat().st_mode & 0o111 == 0:
+              raise SystemExit("wrapper script is not executable")
+
+          jars = list(Path("backend-standalone/build/libs").glob("*-all.jar"))
+          if len(jars) != 1:
+              raise SystemExit(f"expected one standalone fat jar, found {len(jars)}")
+
+          with zipfile.ZipFile(jars[0]) as archive:
+              names = archive.namelist()
+              if not any(name.endswith("StandaloneMainKt.class") for name in names):
+                  raise SystemExit("standalone fat jar does not include StandaloneMainKt")
+          PY
+
+      - name: Run standalone smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workspace_dir=$(mktemp -d)
+          instance_dir=$(mktemp -d)
+          log_file="$RUNNER_TEMP/kast-standalone.log"
+
+          python3 - "$workspace_dir" <<'PY'
+          from pathlib import Path
+          import sys
+
+          root = Path(sys.argv[1]) / "src/main/kotlin/sample"
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "Greeter.kt").write_text(
+              'package sample\n\nfun greet(name: String): String = "hi $name"\n',
+              encoding="utf-8",
+          )
+          (root / "Use.kt").write_text(
+              'package sample\n\nfun use(): String = greet("kast")\n',
+              encoding="utf-8",
+          )
+          (root / "SecondaryUse.kt").write_text(
+              'package sample\n\nfun useAgain(): String = greet("again")\n',
+              encoding="utf-8",
+          )
+          (root / "Broken.kt").write_text(
+              "package sample\n\nfun broken(): String = missingValue()\n",
+              encoding="utf-8",
+          )
+          PY
+
+          KAST_INSTANCE_DIR="$instance_dir" \
+            ./backend-standalone/build/scripts/backend-standalone \
+            --workspace-root="$workspace_dir" \
+            >"$log_file" 2>&1 &
+          pid=$!
+
+          cleanup() {
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          python3 - "$instance_dir" "$workspace_dir" <<'PY'
+          import json
+          import sys
+          import time
+          import urllib.request
+          from pathlib import Path
+
+          instance_dir = Path(sys.argv[1])
+          workspace_dir = Path(sys.argv[2])
+
+          descriptor_path = None
+          for _ in range(120):
+              matches = sorted(instance_dir.glob("*.json"))
+              if matches:
+                  descriptor_path = matches[0]
+                  break
+              time.sleep(1)
+          if descriptor_path is None:
+              raise SystemExit("standalone server never wrote a descriptor file")
+
+          descriptor = json.loads(descriptor_path.read_text(encoding="utf-8"))
+          base_url = f"http://{descriptor['host']}:{descriptor['port']}/api/v1"
+
+          def get(route: str):
+              with urllib.request.urlopen(f"{base_url}{route}") as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          def post(route: str, payload: dict):
+              data = json.dumps(payload).encode("utf-8")
+              request = urllib.request.Request(
+                  f"{base_url}{route}",
+                  data=data,
+                  headers={"Content-Type": "application/json"},
+              )
+              with urllib.request.urlopen(request) as response:
+                  return json.loads(response.read().decode("utf-8"))
+
+          use_file = workspace_dir / "src/main/kotlin/sample/Use.kt"
+          broken_file = workspace_dir / "src/main/kotlin/sample/Broken.kt"
+          offset = use_file.read_text(encoding="utf-8").index("greet")
+
+          health = get("/health")
+          capabilities = get("/capabilities")
+          symbol = post(
+              "/symbol/resolve",
+              {
+                  "position": {
+                      "filePath": str(use_file),
+                      "offset": offset,
+                  },
+              },
+          )
+          references = post(
+              "/references",
+              {
+                  "position": {
+                      "filePath": str(use_file),
+                      "offset": offset,
+                  },
+                  "includeDeclaration": True,
+              },
+          )
+          diagnostics = post(
+              "/diagnostics",
+              {
+                  "filePaths": [str(broken_file)],
+              },
+          )
+          rename = post(
+              "/rename",
+              {
+                  "position": {
+                      "filePath": str(use_file),
+                      "offset": offset,
+                  },
+                  "newName": "welcome",
+              },
+          )
+
+          assert health["status"] == "ok"
+          assert health["backendName"] == "standalone"
+          assert capabilities["backendName"] == "standalone"
+          assert "RESOLVE_SYMBOL" in capabilities["readCapabilities"]
+          assert "FIND_REFERENCES" in capabilities["readCapabilities"]
+          assert "DIAGNOSTICS" in capabilities["readCapabilities"]
+          assert "RENAME" in capabilities["mutationCapabilities"]
+          assert symbol["symbol"]["fqName"] == "sample.greet"
+          assert symbol["symbol"]["location"]["filePath"].endswith("Greeter.kt")
+          assert len(references["references"]) == 2
+          assert references["references"][0]["filePath"].endswith("SecondaryUse.kt")
+          assert references["references"][1]["filePath"].endswith("Use.kt")
+          assert diagnostics["diagnostics"], "expected at least one standalone diagnostic"
+          assert diagnostics["diagnostics"][0]["code"] == "UNRESOLVED_REFERENCE"
+          assert len(rename["edits"]) == 3
+          assert sorted(rename["affectedFiles"]) == sorted(
+              edit["filePath"] for edit in rename["edits"]
+          )
+          PY
+
+          kill "$pid"
+          wait "$pid" || true
+          trap - EXIT
+
+          for _ in 1 2 3 4 5; do
+            if ! find "$instance_dir" -name '*.json' -print -quit | grep -q .; then
+              break
+            fi
+            sleep 1
+          done
+
+          if find "$instance_dir" -name '*.json' -print -quit | grep -q .; then
+            echo "descriptor file was not removed on shutdown" >&2
+            cat "$log_file" >&2
+            exit 1
+          fi
+
+  intellij-tests:
+    name: IntelliJ tests
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Run IntelliJ contract tests
+        run: ./gradlew :backend-intellij:test --tests '*IntelliJAnalysisBackendContractTest'
+
+  intellij-package:
+    name: IntelliJ package verification
+    runs-on: ubuntu-latest
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-package
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build and verify IntelliJ plugin
+        run: >
+          ./gradlew
+          :backend-intellij:verifyPluginProjectConfiguration
+          :backend-intellij:buildPlugin
+          :backend-intellij:verifyPluginStructure
+          :backend-intellij:verifyPlugin
+
+      - name: Check plugin artifact contents
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+
+          archives = list(Path("backend-intellij/build/distributions").glob("*.zip"))
+          if len(archives) != 1:
+              raise SystemExit(f"expected one plugin archive, found {len(archives)}")
+
+          with ZipFile(archives[0]) as archive:
+              names = archive.namelist()
+              plugin_xml_names = [name for name in names if name.endswith("/META-INF/plugin.xml")]
+              if len(plugin_xml_names) != 1:
+                  raise SystemExit("plugin archive does not contain exactly one plugin.xml")
+              plugin_xml = archive.read(plugin_xml_names[0]).decode("utf-8")
+              if "<id>io.github.amichne.kast</id>" not in plugin_xml:
+                  raise SystemExit("plugin.xml does not contain the expected plugin id")
+              if not any("/lib/" in name and name.endswith(".jar") for name in names):
+                  raise SystemExit("plugin archive does not contain any library jars")
+          PY
