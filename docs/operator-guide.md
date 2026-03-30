@@ -141,6 +141,7 @@ These constraints affect clients regardless of which host you run.
 
 ## Next steps
 
-Use [Get started](get-started.md) if you need the bootstrap flow. Read
+Use [Choose a runtime](choose-a-runtime.md) if you are deciding which host to
+start. Use [Get started](get-started.md) for the bootstrap flow, and read
 [HTTP API](api-reference.md) when you are implementing a client against the
 contract.
