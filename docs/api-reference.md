@@ -45,11 +45,11 @@ truth.
 
 | Capability | IntelliJ plugin | Standalone process | Notes |
 | --- | --- | --- | --- |
-| `RESOLVE_SYMBOL` | Yes | No | IntelliJ resolves against PSI and indices. |
-| `FIND_REFERENCES` | Yes | No | IntelliJ returns locations and optional declarations. |
+| `RESOLVE_SYMBOL` | Yes | Yes | IntelliJ resolves against PSI and indices; standalone resolves against the Kotlin Analysis API. |
+| `FIND_REFERENCES` | Yes | Yes | Both hosts return locations and optional declarations. |
 | `CALL_HIERARCHY` | No | No | The route exists, but production support is not implemented. |
-| `DIAGNOSTICS` | Yes | No | IntelliJ diagnostics are parser-level today. |
-| `RENAME` | Yes | No | The response is a text edit plan. |
+| `DIAGNOSTICS` | Yes | Yes | IntelliJ diagnostics are parser-level today; standalone reports Kotlin Analysis API diagnostics. |
+| `RENAME` | Yes | Yes | The response is a text edit plan in both hosts. |
 | `APPLY_EDITS` | Yes | Yes | This is the shared mutation primitive across both hosts. |
 
 ## Minimal payloads

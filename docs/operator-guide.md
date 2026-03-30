@@ -18,7 +18,7 @@ descriptor file instead of a fixed socket address.
 | Host | Startup trigger | Intended use | Current capabilities |
 | --- | --- | --- | --- |
 | IntelliJ plugin | Open a project in the plugin-enabled IDE | Local development | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
-| Standalone process | Launch the wrapper script or fat JAR | CI and headless workflows | `APPLY_EDITS` |
+| Standalone process | Launch the wrapper script or fat JAR | CI and headless workflows | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
 
 ## Descriptor lifecycle
 
@@ -72,8 +72,14 @@ diagnostics and call hierarchy support remain future work.
 ## Standalone host
 
 The standalone runtime builds a fat JAR plus a launcher script. It uses the
-same HTTP surface and descriptor format as the IntelliJ host, but its current
-semantic backend is still scaffolded.
+same HTTP surface and descriptor format as the IntelliJ host, and it now
+resolves symbols, references, diagnostics, and rename plans through the Kotlin
+Analysis API in headless mode.
+
+When you point the standalone host at a real repository, it looks for
+conventional `src/main` and `src/test` roots first. If the workspace contains
+Gradle build files, it discovers source sets and inter-module dependencies from
+the Gradle model instead of treating the repo as one flat source tree.
 
 Build the standalone distribution:
 
@@ -93,6 +99,9 @@ The standalone CLI accepts `--key=value` arguments.
 | Flag | Default | Notes |
 | --- | --- | --- |
 | `--workspace-root` | Current working directory | Falls back to `KAST_WORKSPACE_ROOT` when omitted |
+| `--source-roots` | unset | Comma-separated absolute paths that override source-root discovery |
+| `--classpath` | unset | Comma-separated absolute paths added to the standalone classpath |
+| `--module-name` | `sources` | Module label used only when you override source roots manually |
 | `--host` | `127.0.0.1` | Local-only by default |
 | `--port` | `0` | Uses an ephemeral port by default |
 | `--token` | unset | Falls back to `KAST_TOKEN` |
@@ -100,7 +109,9 @@ The standalone CLI accepts `--key=value` arguments.
 | `--max-results` | `500` | Caps `references` and `diagnostics` output |
 | `--max-concurrent-requests` | `4` | Limits parallel backend work |
 
-The standalone backend currently advertises `APPLY_EDITS` only.
+The standalone backend currently advertises `RESOLVE_SYMBOL`,
+`FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, and `APPLY_EDITS`. Call hierarchy
+remains unavailable in production hosts.
 
 ## Operational notes
 

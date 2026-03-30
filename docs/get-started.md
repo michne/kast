@@ -64,7 +64,12 @@ surface stays the same after startup.
           --workspace-root=/absolute/path/to/workspace
         ```
 
-    3. Optional: add `--token=shared-secret` if you want protected routes to
+    3. By default, the standalone host scans conventional source roots and
+       auto-discovers Gradle multi-module workspaces. Use `--source-roots`,
+       `--classpath`, or `--module-name` only when you need to override that
+       discovery.
+
+    4. Optional: add `--token=shared-secret` if you want protected routes to
        require the `X-Kast-Token` header.
 
 ## Discover the instance

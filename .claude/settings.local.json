@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(npx:*)"
+    ]
+  },
+  "remote": {
+    "defaultEnvironmentId": "env_01E2wnJX2hrFiDys2iPfiqUy"
+  }
+}
