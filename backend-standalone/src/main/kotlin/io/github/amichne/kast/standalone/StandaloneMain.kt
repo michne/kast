@@ -7,7 +7,14 @@ import java.nio.file.Path
 import kotlin.io.path.Path
 
 fun main(args: Array<String>) {
+    System.setProperty("java.awt.headless", "true")
     val cli = StandaloneCliArguments.parse(args)
+    val session = StandaloneAnalysisSession(
+        workspaceRoot = cli.workspaceRoot,
+        sourceRoots = cli.sourceRoots,
+        classpathRoots = cli.classpathRoots,
+        moduleName = cli.moduleName,
+    )
     val backend = StandaloneAnalysisBackend(
         workspaceRoot = cli.workspaceRoot,
         limits = ServerLimits(
@@ -15,6 +22,7 @@ fun main(args: Array<String>) {
             requestTimeoutMillis = cli.requestTimeoutMillis,
             maxConcurrentRequests = cli.maxConcurrentRequests,
         ),
+        session = session,
     )
     val server = AnalysisServer(
         backend = backend,
@@ -31,6 +39,7 @@ fun main(args: Array<String>) {
     Runtime.getRuntime().addShutdownHook(
         Thread {
             server.close()
+            session.close()
         },
     )
 
@@ -41,6 +50,9 @@ fun main(args: Array<String>) {
 
 private data class StandaloneCliArguments(
     val workspaceRoot: Path,
+    val sourceRoots: List<Path>,
+    val classpathRoots: List<Path>,
+    val moduleName: String,
     val host: String,
     val port: Int,
     val token: String?,
@@ -64,6 +76,9 @@ private data class StandaloneCliArguments(
                         ?: System.getenv("KAST_WORKSPACE_ROOT")
                         ?: System.getProperty("user.dir"),
                 ).toAbsolutePath().normalize(),
+                sourceRoots = parsePathList(values["source-roots"]),
+                classpathRoots = parsePathList(values["classpath"]),
+                moduleName = values["module-name"] ?: "sources",
                 host = values["host"] ?: "127.0.0.1",
                 port = values["port"]?.toInt() ?: 0,
                 token = values["token"] ?: System.getenv("KAST_TOKEN"),
@@ -72,5 +87,12 @@ private data class StandaloneCliArguments(
                 maxConcurrentRequests = values["max-concurrent-requests"]?.toInt() ?: 4,
             )
         }
+
+        private fun parsePathList(value: String?): List<Path> = value
+            ?.split(",")
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            ?.map { entry -> Path(entry).toAbsolutePath().normalize() }
+            ?: emptyList()
     }
 }
