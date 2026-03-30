@@ -1,0 +1,33 @@
+package io.github.amichne.kast.server
+
+import io.github.amichne.kast.api.ServerInstanceDescriptor
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.nio.file.Path
+import kotlin.io.path.exists
+
+class DescriptorStoreTest {
+    @TempDir
+    lateinit var tempDir: Path
+
+    @Test
+    fun `writes and deletes descriptor files`() {
+        val descriptor = ServerInstanceDescriptor(
+            workspaceRoot = "/tmp/workspace",
+            backendName = "standalone",
+            backendVersion = "0.1.0",
+            host = "127.0.0.1",
+            port = 9123,
+            token = "secret",
+        )
+        val store = DescriptorStore(tempDir)
+
+        val path = store.write(descriptor)
+        assertTrue(path.exists())
+
+        store.delete(descriptor)
+        assertEquals(false, path.exists())
+    }
+}

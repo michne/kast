@@ -1,0 +1,13 @@
+<idea-plugin>
+  <id>io.github.amichne.kast</id>
+  <name>Kast</name>
+  <vendor email="opensource@amichne.dev" url="https://github.com/amichne/kast">amichne</vendor>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends>org.jetbrains.kotlin</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <projectService serviceImplementation="io.github.amichne.kast.intellij.KastProjectService" />
+    <postStartupActivity implementation="io.github.amichne.kast.intellij.KastProjectActivity" />
+  </extensions>
+</idea-plugin>

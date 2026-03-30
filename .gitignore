@@ -86,6 +86,13 @@ fabric.properties
 out
 gen
 **/build/
+.gradle/
+.run/
+.qodana/
+.intellijPlatform/
+tmp/
+*.sandbox/
+*.zip
 ### Kotlin template
 # Compiled class file
 *.class
