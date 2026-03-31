@@ -1,6 +1,4 @@
-import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.jvm.tasks.Jar
-import org.gradle.kotlin.dsl.register
 
 plugins {
     application
@@ -11,6 +9,7 @@ tasks.named<Jar>("jar") {
     manifest {
         attributes["Main-Class"] = application.mainClass.get()
     }
+    isZip64 = true
 }
 
 val fatJar by tasks.registering(Jar::class) {
@@ -20,6 +19,7 @@ val fatJar by tasks.registering(Jar::class) {
     manifest {
         attributes["Main-Class"] = application.mainClass.get()
     }
+    isZip64 = true
 
     from(sourceSets.main.get().output)
 
@@ -41,14 +41,14 @@ tasks.register("writeWrapperScript") {
         val script = output.get().asFile
         script.parentFile.mkdirs()
         script.writeText(
-            """
+            $$"""
             |#!/usr/bin/env bash
             |set -euo pipefail
             |
-            |SCRIPT_DIR="$(cd -- "$(dirname -- "${'$'}0")" && pwd)"
-            |JAR="${'$'}SCRIPT_DIR/../libs/${project.name}-${project.version}-all.jar"
+            |SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+            |JAR="$SCRIPT_DIR/../libs/$${project.name}-$${project.version}-all.jar"
             |
-            |exec java ${'$'}{JAVA_OPTS:-} -jar "${'$'}JAR" "${'$'}@"
+            |exec java ${JAVA_OPTS:-} -jar "$JAR" "$@"
             """.trimMargin(),
         )
         script.setExecutable(true)
