@@ -27,11 +27,15 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.0.0"
+
       - name: Build standalone backend
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
         run: >
-          ./gradlew
+          gradle
           :shared-testing:test
           :backend-standalone:test
           :backend-standalone:fatJar
@@ -232,10 +236,14 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.0.0"
+
       - name: Run IntelliJ contract tests
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
-        run: ./gradlew :backend-intellij:test --tests '*IntelliJAnalysisBackendContractTest'
+        run: gradle :backend-intellij:test --tests '*IntelliJAnalysisBackendContractTest'
 
   intellij-package:
     name: IntelliJ package verification
@@ -248,11 +256,15 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "9.0.0"
+
       - name: Build and verify IntelliJ plugin
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-package
         run: >
-          ./gradlew
+          gradle
           :backend-intellij:verifyPluginProjectConfiguration
           :backend-intellij:buildPlugin
           :backend-intellij:verifyPluginStructure
