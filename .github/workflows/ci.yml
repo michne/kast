@@ -31,6 +31,13 @@ jobs:
         with:
           gradle-version: "9.0.0"
 
+      - name: Initialize IntelliJ platform
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+        run: >
+          gradle
+          :backend-intellij:initializeIntellijPlatformPlugin
+
       - name: Build standalone backend
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
@@ -269,10 +276,21 @@ jobs:
         with:
           gradle-version: "9.0.0"
 
+      - name: Initialize IntelliJ platform
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
+        run: >
+          gradle
+          :backend-intellij:initializeIntellijPlatformPlugin
+
       - name: Run IntelliJ contract tests
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
-        run: gradle :backend-intellij:test --tests '*IntelliJAnalysisBackendContractTest'
+        run: >
+          gradle
+          :backend-intellij:test
+          --tests
+          '*IntelliJAnalysisBackendContractTest'
 
   intellij-package:
     name: IntelliJ package verification
@@ -288,6 +306,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.0.0"
+
+      - name: Initialize IntelliJ platform
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-package
+        run: >
+          gradle
+          :backend-intellij:initializeIntellijPlatformPlugin
 
       - name: Build and verify IntelliJ plugin
         env:
