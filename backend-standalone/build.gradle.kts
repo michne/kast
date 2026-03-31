@@ -1,18 +1,53 @@
+import org.gradle.api.artifacts.VersionCatalogsExtension
+import org.gradle.api.file.ConfigurableFileTree
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     id("kas.standalone-app")
 }
 
+private val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
+private val intellijIdeaVersion = catalog.findVersion("intellij-idea").get().requiredVersion
+
 // Pinned to IJ 2025.3 (ij253) — must match the analysis-api-standalone-for-ide version.
-// If the distribution is absent, run: ./gradlew :backend-intellij:build
-val ideaHomeOrNull: File? = fileTree(gradle.gradleUserHomeDir.resolve("caches/9.0.0/transforms")) {
-    include("**/transformed/idea-2025.3-*/plugins/Kotlin/lib/kotlin-plugin.jar")
+// CI starts from a cold Gradle home, so resolve backend-intellij's extraction task first
+// and then read the populated transform cache lazily.
+private fun locateIdeaHome(): File? = fileTree(gradle.gradleUserHomeDir.resolve("caches")) {
+    include("**/transformed/idea-$intellijIdeaVersion-*/plugins/Kotlin/lib/kotlin-plugin.jar")
 }.files.firstOrNull()?.parentFile?.parentFile?.parentFile?.parentFile
 
-val ideaHome: File get() = ideaHomeOrNull
+private fun requireIdeaHome(): File = locateIdeaHome()
     ?: error(
-        "IntelliJ IDEA 2025.3 distribution not found in the Gradle cache. " +
-            "Run './gradlew :backend-intellij:build' once to populate it.",
+        "IntelliJ IDEA $intellijIdeaVersion distribution not found in the Gradle cache. " +
+            "Run './gradlew :backend-intellij:initializeIntellijPlatformPlugin' once to populate it.",
     )
+
+private fun ideaJarFiles(
+    relativePath: String,
+    configure: ConfigurableFileTree.() -> Unit,
+) = files(
+    providers.provider {
+        fileTree(requireIdeaHome().resolve(relativePath), configure).files
+    },
+)
+
+private fun ideaFile(relativePath: String) = providers.provider {
+    requireIdeaHome().resolve(relativePath)
+}
+
+val prepareIntellijPlatform by tasks.registering {
+    dependsOn(":backend-intellij:initializeIntellijPlatformPlugin")
+}
+
+tasks.withType<KotlinCompile>().configureEach {
+    dependsOn(prepareIntellijPlatform)
+}
+
+tasks.matching {
+    it.name in setOf("fatJar", "distZip", "installDist", "startScripts")
+}.configureEach {
+    dependsOn(prepareIntellijPlatform)
+}
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Compat JAR strategy
@@ -46,15 +81,12 @@ val ideaHome: File get() = ideaHomeOrNull
 // PathResolver / PluginXmlPathResolver: need app.jar (new API types) +
 //   kotlin-compiler.jar (old RawPluginDescriptor, ReadModuleContext, XmlReader, StaxFactory).
 val compileCompatJava by tasks.registering(JavaCompile::class) {
+    dependsOn(prepareIntellijPlatform)
     source = fileTree("src/compat/java") { include("**/*.java") }
-    classpath = if (ideaHomeOrNull != null) {
-        files(
-            ideaHome.resolve("lib/app.jar"),
-            ideaHome.resolve("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar"),
-        )
-    } else {
-        files()
-    }
+    classpath = files(
+        ideaFile("lib/app.jar"),
+        ideaFile("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar"),
+    )
     destinationDirectory.set(layout.buildDirectory.dir("compat-classes"))
     sourceCompatibility = "11"
     targetCompatibility = "11"
@@ -62,14 +94,14 @@ val compileCompatJava by tasks.registering(JavaCompile::class) {
 }
 
 val buildIdeCompatJar by tasks.registering(Jar::class) {
-    onlyIf { ideaHomeOrNull != null }
+    dependsOn(prepareIntellijPlatform)
     archiveFileName.set("ide-plugin-compat.jar")
     destinationDirectory.set(layout.buildDirectory.dir("compat"))
     // 1. Hybrid ContainerDescriptor must come first to win the duplicate race.
     from(compileCompatJava)
     from(
         zipTree(
-            provider { ideaHome.resolve("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar") },
+            ideaFile("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar"),
         ),
     ) {
         // Include all plugin-descriptor parsing classes that the AA
@@ -107,32 +139,20 @@ val buildIdeCompatJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val ideaLibs = if (ideaHomeOrNull != null) {
-    fileTree(ideaHome.resolve("lib")) {
-        include("**/*.jar")
-        // testFramework.jar auto-registers ThreadLeakTrackerExtension (JUnit 5 extension)
-        // which needs --add-opens for javax.swing and is not needed for standalone analysis.
-        exclude("testFramework.jar")
-        exclude("testFramework-k1.jar")
-    }
-} else {
-    files()
+val ideaLibs = ideaJarFiles("lib") {
+    include("**/*.jar")
+    // testFramework.jar auto-registers ThreadLeakTrackerExtension (JUnit 5 extension)
+    // which needs --add-opens for javax.swing and is not needed for standalone analysis.
+    exclude("testFramework.jar")
+    exclude("testFramework-k1.jar")
 }
-val kotlinPluginLibs = if (ideaHomeOrNull != null) {
-    fileTree(ideaHome.resolve("plugins/Kotlin/lib")) {
-        include("**/*.jar")
-        // kotlin-jps-plugin.jar ships an old Java CompilerConfiguration (no Kotlin companion)
-        // that shadows the correct version in kotlin-compiler-common.jar → NoSuchFieldError.
-        exclude("jps/**")
-    }
-} else {
-    files()
+val kotlinPluginLibs = ideaJarFiles("plugins/Kotlin/lib") {
+    include("**/*.jar")
+    // kotlin-jps-plugin.jar ships an old Java CompilerConfiguration (no Kotlin companion)
+    // that shadows the correct version in kotlin-compiler-common.jar → NoSuchFieldError.
+    exclude("jps/**")
 }
-val javaPluginLibs = if (ideaHomeOrNull != null) {
-    fileTree(ideaHome.resolve("plugins/java/lib")) { include("**/*.jar") }
-} else {
-    files()
-}
+val javaPluginLibs = ideaJarFiles("plugins/java/lib") { include("**/*.jar") }
 
 application {
     mainClass = "io.github.amichne.kast.standalone.StandaloneMainKt"

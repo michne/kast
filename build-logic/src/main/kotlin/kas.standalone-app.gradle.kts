@@ -31,7 +31,7 @@ val fatJar by tasks.registering(Jar::class) {
     )
 }
 
-tasks.register("writeWrapperScript") {
+val writeWrapperScript by tasks.registering {
     dependsOn(fatJar)
 
     val output = layout.buildDirectory.file("scripts/${project.name}")
@@ -53,4 +53,14 @@ tasks.register("writeWrapperScript") {
         )
         script.setExecutable(true)
     }
+}
+
+writeWrapperScript.configure {
+    mustRunAfter(tasks.named("startScripts"))
+}
+
+tasks.matching {
+    it.name in setOf("distZip", "distTar", "installDist")
+}.configureEach {
+    dependsOn(writeWrapperScript)
 }

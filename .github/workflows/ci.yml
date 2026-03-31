@@ -225,6 +225,35 @@ jobs:
             exit 1
           fi
 
+      - name: Build runnable distributions
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
+        run: >
+          gradle
+          :analysis-cli:distZip
+          :backend-standalone:distZip
+
+      - name: Upload standalone distribution
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v6
+        with:
+          name: kast-backend-standalone
+          path: backend-standalone/build/distributions/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+      - name: Upload CLI distribution
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v6
+        with:
+          name: kast-analysis-cli
+          path: analysis-cli/build/distributions/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   intellij-tests:
     name: IntelliJ tests
     runs-on: ubuntu-latest
@@ -292,3 +321,12 @@ jobs:
               if not any("/lib/" in name and name.endswith(".jar") for name in names):
                   raise SystemExit("plugin archive does not contain any library jars")
           PY
+
+      - name: Upload IntelliJ plugin artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: kast-intellij-plugin
+          path: backend-intellij/build/distributions/*.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

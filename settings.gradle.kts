@@ -1,3 +1,5 @@
+import org.jetbrains.intellij.platform.gradle.extensions.intellijPlatform
+
 plugins {
     id("org.jetbrains.intellij.platform.settings") version "2.13.1"
 }
@@ -10,8 +12,9 @@ dependencyResolutionManagement {
     repositories {
         mavenCentral()
         maven("https://repo.gradle.org/gradle/libs-releases")
-        maven("https://packages.jetbrains.team/maven/p/ij/intellij-dependencies")
-        maven("https://www.jetbrains.com/intellij-repository/releases")
+        intellijPlatform {
+            defaultRepositories()
+        }
     }
 }
 
