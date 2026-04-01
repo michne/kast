@@ -79,19 +79,6 @@ internal class WorkspaceRuntimeManager(
             )
         }
 
-        if (options.backendName == "intellij") {
-            val intellijCandidate = inspection.candidates.firstOrNull { it.descriptor.backendName == "intellij" }
-                ?: throw CliFailure(
-                    code = "RUNTIME_NOT_AVAILABLE",
-                    message = "No IntelliJ runtime is registered for ${options.workspaceRoot}",
-                )
-            return WorkspaceEnsureResult(
-                workspaceRoot = options.workspaceRoot.toString(),
-                started = false,
-                selected = waitForReady(options, intellijCandidate.descriptor.backendName),
-            )
-        }
-
         val liveStandalone = inspection.candidates.firstOrNull { it.descriptor.backendName == "standalone" }
         if (liveStandalone != null) {
             if (!liveStandalone.reachable || liveStandalone.runtimeStatus?.state == RuntimeState.DEGRADED) {
@@ -182,14 +169,13 @@ internal class WorkspaceRuntimeManager(
         val registeredDescriptors = registry.findByWorkspaceRoot(options.workspaceRoot)
         val candidates = registeredDescriptors.mapNotNull { registered ->
             inspectDescriptor(registry, registered, pruneStaleDescriptors)
-        }
+        }.filter { candidate -> candidate.descriptor.backendName == "standalone" }
 
         return WorkspaceInspection(
             descriptorDirectory = descriptorDirectory,
             candidates = candidates.sortedWith(
                 compareByDescending(RuntimeCandidateStatus::ready)
-                    .thenBy { backendPreferenceRank(it.descriptor.backendName) }
-                    .thenBy { it.descriptor.backendName },
+                    .thenBy(RuntimeCandidateStatus::descriptorPath),
             ),
             selected = selectStatusCandidate(candidates, options.backendName),
         )
@@ -294,7 +280,7 @@ internal fun selectReadyCandidate(
 ): RuntimeCandidateStatus? = candidates
     .filter { candidate -> backendName == null || candidate.descriptor.backendName == backendName }
     .filter(RuntimeCandidateStatus::ready)
-    .sortedWith(compareBy({ backendPreferenceRank(it.descriptor.backendName) }, { it.descriptor.backendName }))
+    .sortedBy(RuntimeCandidateStatus::descriptorPath)
     .firstOrNull()
 
 internal fun selectStatusCandidate(
@@ -304,16 +290,9 @@ internal fun selectStatusCandidate(
     .filter { candidate -> backendName == null || candidate.descriptor.backendName == backendName }
     .sortedWith(
         compareByDescending(RuntimeCandidateStatus::ready)
-            .thenBy { backendPreferenceRank(it.descriptor.backendName) }
-            .thenBy { it.descriptor.backendName },
+            .thenBy(RuntimeCandidateStatus::descriptorPath),
     )
     .firstOrNull()
-
-private fun backendPreferenceRank(backendName: String): Int = when (backendName) {
-    "intellij" -> 0
-    "standalone" -> 1
-    else -> 2
-}
 
 private fun isProcessAlive(pid: Long): Boolean = ProcessHandle.of(pid)
     .takeIf { it.isPresent }

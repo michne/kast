@@ -1,56 +1,46 @@
 ---
 title: Kast
-description: One HTTP contract for Kotlin analysis across IntelliJ and
-  standalone runtimes.
+description: One HTTP contract for Kotlin analysis through a CLI-managed
+  standalone runtime.
 icon: lucide/network
 ---
 
-Kast gives tools and agents one HTTP/JSON contract for Kotlin analysis,
-regardless of whether the engine is running inside IntelliJ or as a standalone
-JVM process. The current build already supports runtime discovery, capability
-negotiation, PSI-backed analysis in the IntelliJ host, and backend-agnostic
-text edit application.
+Kast gives tools and agents one HTTP/JSON contract for Kotlin analysis through
+a single supported runtime model: the repo-local CLI manages a standalone
+daemon, and clients can keep using that CLI or call the daemon's advertised
+HTTP endpoint directly once it is ready.
 
 <div class="grid cards" markdown>
 
--   **Choose a runtime**
+-   **Runtime model**
 
-    Compare the IntelliJ and standalone hosts before you wire one into your
-    workflow.
+    See how the CLI control plane, descriptor files, and standalone daemon fit
+    together.
 
-    [Decide which host to start](choose-a-runtime.md)
+    [Understand the supported flow](choose-a-runtime.md)
 
 -   **Get started**
 
-    Build a runtime, discover its descriptor file, and make your first
-    request.
+    Build the CLI, ensure a workspace runtime, and make your first request.
 
     [Open the quickstart](get-started.md)
 
 -   **HTTP API**
 
-    Learn the route map, request conventions, and capability-gated
-    operations.
+    Learn the route map, request conventions, and capability-gated operations.
 
     [Read the reference](api-reference.md)
 
--   **Operate runtimes**
+-   **Operator guide**
 
-    See how descriptor registration, limits, tokens, and host behavior work.
+    See how descriptor registration, limits, tokens, and command behavior work.
 
     [Read the operator guide](operator-guide.md)
 
--   **Explore a CLI control plane**
-
-    Review the alternatives for a command-first workflow that still preserves
-    the current host split and backend contract.
-
-    [Read the control-plane note](impl-002.md)
-
 -   **Track the gap**
 
-    Review what is implemented now and what remains before the full design
-    lands.
+    Review what is implemented now and what remains before the standalone
+    runtime is feature-complete.
 
     [Read the remaining work](remaining-work.md)
 
@@ -58,35 +48,38 @@ text edit application.
 
 ## Runtime model
 
-Every Kast instance follows the same discovery and request flow. Clients read
-the workspace-local descriptor directory first, then call the advertised host
-and port instead of assuming one fixed local endpoint.
+Every supported Kast flow follows the same pattern: the repo-local CLI ensures
+a standalone runtime for one workspace, the runtime writes a descriptor, and
+clients either keep using the CLI or call the advertised host and port over
+HTTP.
 
 ```mermaid
 graph LR
-    Workspace["Kotlin workspace"] --> Runtime["Kast runtime"]
+    Workspace["Kotlin workspace"] --> Cli["analysis-cli"]
+    Cli --> Runtime["Standalone runtime"]
     Runtime --> Descriptor["<workspace>/.kast/instances/*.json"]
     Client["Agent or tool"] --> Descriptor
+    Client --> Cli
     Client --> Api["HTTP/JSON routes"]
 ```
 
 ## What exists today
 
-The transport surface is broader than the production capability set, so the
-important distinction is what each host advertises right now.
+The transport surface is broader than the remaining product gap, so the useful
+distinction is which supported surface does what today.
 
-| Host | Intended use | Current capabilities |
+| Surface | Intended use | Current behavior |
 | --- | --- | --- |
-| IntelliJ plugin | Local development | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
-| Standalone process | CI and headless workflows | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
+| `analysis-cli` | Default operator and agent workflow | Detached daemon management, readiness checks, capability-gated JSON commands |
+| Standalone daemon | Kotlin analysis engine | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
+| Direct HTTP | Low-level integration after bootstrap | Same `/api/v1` contract once the descriptor identifies one ready standalone runtime |
 
 > **Note:** The `/api/v1/call-hierarchy` route exists, but no production
 > backend advertises `CALL_HIERARCHY` yet.
 
 ## Next steps
 
-Start with [Choose a runtime](choose-a-runtime.md) if you need to decide
-between the IntelliJ and standalone hosts. Use
-[Get started](get-started.md) once you are ready to start one, then keep
-[Operator guide](operator-guide.md) open when you need the runtime defaults and
-descriptor details.
+Start with [Runtime model](choose-a-runtime.md) if you need to decide between
+the CLI control plane and direct HTTP. Use [Get started](get-started.md) once
+you are ready to start a workspace runtime, then keep
+[Operator guide](operator-guide.md) open for command and descriptor details.

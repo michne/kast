@@ -1,3 +1,4 @@
+import org.gradle.api.file.DuplicatesStrategy
 import org.gradle.jvm.tasks.Jar
 
 plugins {
@@ -40,15 +41,13 @@ val writeWrapperScript by tasks.registering {
     doLast {
         val script = output.get().asFile
         script.parentFile.mkdirs()
+        val libsDir = layout.buildDirectory.asFile.get().toPath().resolve("libs").toAbsolutePath()
         script.writeText(
             $$"""
             |#!/usr/bin/env bash
             |set -euo pipefail
             |
-            |SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
-            |JAR="$SCRIPT_DIR/../libs/$${project.name}-$${project.version}-all.jar"
-            |
-            |exec java ${JAVA_OPTS:-} -jar "$JAR" "$@"
+            |exec java ${JAVA_OPTS:-} -jar "$${libsDir.resolve("analysis-cli-all.jar").toAbsolutePath()}" "$@"
             """.trimMargin(),
         )
         script.setExecutable(true)

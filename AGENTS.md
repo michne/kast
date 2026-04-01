@@ -1,8 +1,7 @@
 # Kast agent guide
 
-Kast is a Kotlin analysis server with one HTTP/JSON contract and two runtime
-hosts: an IntelliJ plugin for local development and a standalone JVM process
-for CI and headless workflows.
+Kast is a Kotlin analysis server with one HTTP/JSON contract and one supported
+runtime host: a CLI-managed standalone JVM process for local automation and CI.
 
 Subdirectory `AGENTS.md` files narrow these rules for their own units. When a
 rule exists in both places, follow the deeper file.
@@ -28,14 +27,12 @@ Use this map to choose the narrowest unit that owns a change.
 
 - `analysis-api`: shared contract, serializable models, errors, file edit
   validation, and disk edit helpers
-- `analysis-common`: shared PSI and K2 Analysis API utilities used by both
-  runtime hosts
+- `analysis-cli`: repo-local CLI control plane, detached daemon management,
+  runtime readiness checks, and request dispatch
 - `analysis-server`: Ktor transport, capability gating, auth, request limits,
   and descriptor lifecycle
-- `backend-intellij`: IntelliJ-hosted backend, PSI-backed analysis, plugin
-  lifecycle, and project service startup
-- `backend-standalone`: standalone host, CLI parsing, and the scaffolded
-  headless backend
+- `backend-standalone`: standalone host, Analysis API session bootstrap,
+  PSI/K2-backed analysis helpers, and runtime startup
 - `shared-testing`: fake backend fixtures for tests
 - `build-logic`: Gradle convention plugins and shared build configuration
 - `docs`: Zensical source docs, ADRs, operator guidance, and implementation
@@ -50,17 +47,17 @@ Apply these rules across the repo before local unit rules add more detail.
   into `analysis-api` only when multiple hosts or transports need them.
 - Keep host-specific dependencies out of shared units. `analysis-api` and
   `analysis-server` must stay free of IntelliJ-only APIs.
-- Keep shared PSI and K2 Analysis API helpers in `analysis-common`. Host
-  startup, threading, transport, and CLI behavior still belong in the
-  `backend-*` units.
+- Keep standalone PSI and K2 Analysis API helpers in `backend-standalone`
+  unless another surviving runtime genuinely needs them.
 - Treat API model changes as contract changes. Preserve schema compatibility,
   absolute-path invariants, and capability advertising unless the behavior is
   intentionally changing across the stack.
 - Keep capability gating honest. A route or backend must not advertise support
   for work it cannot actually perform.
-- Respect the current architecture: `analysis-server` owns HTTP transport,
-  `backend-*` modules own runtime behavior, and `shared-testing` stays out of
-  production code paths.
+- Respect the current architecture: `analysis-cli` owns the operator-facing
+  control plane, `analysis-server` owns HTTP transport, `backend-standalone`
+  owns runtime behavior, and `shared-testing` stays out of production code
+  paths.
 - Treat `docs/` plus `zensical.toml` as the documentation source of truth.
   `site/` is generated output and should be rebuilt, not hand-edited.
 - Verify with the narrowest Gradle task that proves the change. Broaden the

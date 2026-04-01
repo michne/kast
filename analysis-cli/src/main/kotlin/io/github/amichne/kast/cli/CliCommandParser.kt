@@ -66,9 +66,19 @@ internal data class ParsedArguments(
 
     fun runtimeOptions(backendName: String? = options["backend-name"]): RuntimeCommandOptions {
         val standaloneOptions = StandaloneServerOptions.fromValues(options)
+        val requestedBackendName = backendName
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?: "standalone"
+        if (requestedBackendName != "standalone") {
+            throw CliFailure(
+                code = "CLI_USAGE",
+                message = "Only --backend-name=standalone is supported",
+            )
+        }
         return RuntimeCommandOptions(
             workspaceRoot = standaloneOptions.workspaceRoot,
-            backendName = backendName,
+            backendName = requestedBackendName,
             waitTimeoutMillis = options["wait-timeout-ms"]?.toLongOrNull() ?: 60_000L,
             standaloneOptions = standaloneOptions,
         )

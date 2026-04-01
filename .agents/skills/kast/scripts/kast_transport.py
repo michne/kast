@@ -224,9 +224,10 @@ def inspect_runtimes(descriptor_directory: Path, workspace_root: Path) -> dict[s
                 continue
             candidates.append(inspect_candidate(path, descriptor))
 
+    candidates = [candidate for candidate in candidates if candidate["descriptor"]["backendName"] == "standalone"]
+
     return {
         "all": candidates,
-        "intellij": classify_backend(candidates, "intellij"),
         "standalone": classify_backend(candidates, "standalone"),
     }
 
@@ -313,16 +314,7 @@ def choose_auto_transport(state: dict[str, Any], operation: str) -> str:
     if cli_available:
         return "cli"
 
-    intellij_ready = state["runtimes"]["intellij"]["readyCount"]
     standalone_ready = state["runtimes"]["standalone"]["readyCount"]
-    if intellij_ready == 1:
-        return "http-intellij"
-    if intellij_ready > 1:
-        raise TransportError(
-            code="AMBIGUOUS_RUNTIME",
-            message="More than one ready IntelliJ runtime matches the workspace",
-            details={"backendName": "intellij", "count": intellij_ready},
-        )
     if standalone_ready == 1:
         return "http-standalone"
     if standalone_ready > 1:
@@ -359,8 +351,8 @@ def invoke_transport(
             "result": result,
         }
 
-    if effective_transport in {"http-intellij", "http-standalone"}:
-        backend_name = "intellij" if effective_transport == "http-intellij" else "standalone"
+    if effective_transport == "http-standalone":
+        backend_name = "standalone"
         result = invoke_http(state, backend_name, workspace_root, operation, request_file)
         return {
             "schemaVersion": SCHEMA_VERSION,

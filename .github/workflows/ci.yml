@@ -31,18 +31,12 @@ jobs:
         with:
           gradle-version: "9.4.0"
 
-      - name: Initialize IntelliJ platform
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
-        run: >
-          ./gradlew
-          :backend-intellij:initializeIntellijPlatformPlugin
-
       - name: Build standalone backend
         env:
           GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
         run: >
           ./gradlew :shared-testing:test
+          :analysis-server:test
           :backend-standalone:test
           :backend-standalone:fatJar
           :backend-standalone:writeWrapperScript
@@ -256,101 +250,6 @@ jobs:
         with:
           name: kast-analysis-cli
           path: analysis-cli/build/distributions/*.zip
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 14
-
-  intellij-tests:
-    name: IntelliJ tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.4.0"
-
-      - name: Initialize IntelliJ platform
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
-        run: >
-          gradle
-          :backend-intellij:initializeIntellijPlatformPlugin
-
-      - name: Run IntelliJ contract tests
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-test
-        run: >
-          gradle
-          :backend-intellij:test
-          --tests
-          '*IntelliJAnalysisBackendContractTest'
-
-  intellij-package:
-    name: IntelliJ package verification
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.4.0"
-
-      - name: Initialize IntelliJ platform
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-package
-        run: >
-          gradle
-          :backend-intellij:initializeIntellijPlatformPlugin
-
-      - name: Build and verify IntelliJ plugin
-        env:
-          GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home-package
-        run: >
-          gradle
-          :backend-intellij:verifyPluginProjectConfiguration
-          :backend-intellij:buildPlugin
-          :backend-intellij:verifyPluginStructure
-          :backend-intellij:verifyPlugin
-
-      - name: Check plugin artifact contents
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          from zipfile import ZipFile
-
-          archives = list(Path("backend-intellij/build/distributions").glob("*.zip"))
-          if len(archives) != 1:
-              raise SystemExit(f"expected one plugin archive, found {len(archives)}")
-
-          with ZipFile(archives[0]) as archive:
-              names = archive.namelist()
-              plugin_xml_names = [name for name in names if name.endswith("/META-INF/plugin.xml")]
-              if len(plugin_xml_names) != 1:
-                  raise SystemExit("plugin archive does not contain exactly one plugin.xml")
-              plugin_xml = archive.read(plugin_xml_names[0]).decode("utf-8")
-              if "<id>io.github.amichne.kast</id>" not in plugin_xml:
-                  raise SystemExit("plugin.xml does not contain the expected plugin id")
-              if not any("/lib/" in name and name.endswith(".jar") for name in names):
-                  raise SystemExit("plugin archive does not contain any library jars")
-          PY
-
-      - name: Upload IntelliJ plugin artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: kast-intellij-plugin
-          path: backend-intellij/build/distributions/*.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 14

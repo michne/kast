@@ -1,4 +1,4 @@
-package io.github.amichne.kast.common
+package io.github.amichne.kast.standalone
 
 import com.intellij.openapi.util.TextRange
 import io.github.amichne.kast.api.Diagnostic
@@ -8,11 +8,9 @@ import org.jetbrains.kotlin.analysis.api.diagnostics.KaSeverity
 
 /**
  * Converts a K2 Analysis API diagnostic to one or more [Diagnostic] API models.
- * Uses the IntelliJ-derived robust range clamping that handles edge cases where
- * diagnostic text ranges exceed the PSI element's bounds.
  */
 @Suppress("UnstableApiUsage")
-fun KaDiagnosticWithPsi<*>.toApiDiagnostics(): List<Diagnostic> {
+internal fun KaDiagnosticWithPsi<*>.toApiDiagnostics(): List<Diagnostic> {
     val ranges = textRanges.ifEmpty { listOf(TextRange(0, psi.textLength)) }
     return ranges.map { range ->
         Diagnostic(
@@ -42,7 +40,7 @@ private fun KaDiagnosticWithPsi<*>.absoluteRange(relativeRange: TextRange): Text
     }
 }
 
-fun KaSeverity.toApiSeverity(): DiagnosticSeverity = when (this) {
+private fun KaSeverity.toApiSeverity(): DiagnosticSeverity = when (this) {
     KaSeverity.ERROR -> DiagnosticSeverity.ERROR
     KaSeverity.WARNING -> DiagnosticSeverity.WARNING
     KaSeverity.INFO -> DiagnosticSeverity.INFO

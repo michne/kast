@@ -15,11 +15,13 @@ Keep these docs tightly coupled to the real implementation and decision record.
   when the architecture changes materially rather than silently rewriting
   history.
 - Keep the README, operator guide, and remaining-work notes consistent with the
-  current capability surface of the IntelliJ and standalone hosts.
+  current capability surface of the standalone runtime and CLI control plane.
 - Change `docs/` or `zensical.toml` when rendered content must move. Do not
   hand-edit the generated files under `site/`.
 - Prefer precise statements over broad claims. If evidence is partial, narrow
   the wording and make the uncertainty explicit.
+- If a note is intentionally historical, label it clearly so it does not read
+  like current product behavior.
 - When behavior changes, update the docs in the same change set if the user-
   facing contract or operator workflow moved.
 

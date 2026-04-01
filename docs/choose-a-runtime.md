@@ -1,173 +1,144 @@
 ---
-title: Choose a runtime
-description: Decide when to use the IntelliJ host, the standalone host, or
-  both.
+title: Runtime model
+description: Understand the supported CLI and HTTP surfaces for Kast's
+  standalone runtime.
 ---
 
-Kast exposes the same HTTP/JSON contract through two runtime hosts. This page
-helps you decide which host to start, what each one needs from your workspace,
-and how to keep one client flow across both.
+Kast now supports one runtime and two operator surfaces: the repo-local CLI is
+the supported control plane, and direct HTTP to the standalone daemon remains
+available once that daemon is already running. This page explains when to use
+each surface and how discovery still works.
 
 <div class="grid cards" markdown>
 
--   **Use the IntelliJ host**
+-   **Use the CLI control plane**
 
-    Start Kast from a plugin-enabled IDE when you want analysis to run against
-    the workspace currently loaded in IntelliJ.
+    Use the repo-local CLI for the normal supported workflow.
 
-    [Go to IntelliJ startup](#use-the-intellij-host)
+    [Go to CLI usage](#use-the-cli-control-plane)
 
--   **Use the standalone host**
+-   **Use direct standalone HTTP**
 
-    Start Kast as a headless JVM process when you need CI, scripts, or another
-    environment without a running IDE.
+    Use this only when a workspace runtime already exists and you need the raw
+    HTTP contract.
 
-    [Go to standalone startup](#use-the-standalone-host)
+    [Go to direct HTTP usage](#use-direct-standalone-http)
 
--   **Use both with one client**
+-   **Keep one discovery flow**
 
-    Keep discovery and request handling identical, then select the runtime from
-    the descriptor file at connection time.
+    Keep descriptor lookup and capability checks identical whether you stay on
+    the CLI or drop down to HTTP.
 
-    [Go to shared client flow](#use-both-with-one-client-flow)
+    [Go to discovery flow](#keep-one-discovery-flow)
 
 </div>
 
-## Compare the hosts
+## Compare the supported surfaces
 
-Both hosts write the same descriptor shape and serve the same route map. The
-main difference is where analysis runs and how the workspace gets loaded.
+Both surfaces target the same standalone runtime. The main difference is who is
+responsible for daemon lifecycle, readiness checks, and descriptor handling.
 
-| Question | IntelliJ host | Standalone host |
+| Question | Repo-local CLI | Direct standalone HTTP |
 | --- | --- | --- |
-| Where it runs | Inside the IntelliJ process for one open project | In its own JVM process |
-| How it starts | Open a project in the plugin-enabled IDE | Launch the wrapper script or fat JAR |
-| Workspace source | The project already opened in IntelliJ | `--workspace-root` or `KAST_WORKSPACE_ROOT` |
-| Source discovery | Uses the IDE project model, PSI, and indices | Scans conventional source roots and auto-discovers Gradle modules when available |
-| Default bind | `127.0.0.1` on an ephemeral port | `127.0.0.1` on an ephemeral port |
-| Descriptor field | `backendName = "intellij"` | `backendName = "standalone"` |
-| Current production capabilities | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` |
-| Common use case | Local development with a live IDE project | CI, automation, and headless workflows |
+| Starts a runtime when missing | Yes | No |
+| Reads and validates descriptors | Yes | Caller must do it |
+| Waits for readiness | Yes | Caller must do it |
+| Primary use case | Agents, scripts, and operators in this repo | Low-level integrations after bootstrap |
+| Supported backend | `standalone` | `standalone` |
+| Current production capabilities | `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, `APPLY_EDITS` | Same daemon capabilities |
 
-## Use the IntelliJ host
+## Use the CLI control plane
 
-Use the IntelliJ host when your workspace is already open in IntelliJ and you
-want Kast to start from that project context.
+Use the CLI when you want Kast to work correctly for a workspace without
+managing descriptor files or process handles yourself.
 
-1. Build the plugin from the repo root.
+1. Build the CLI from the repo root.
 
    ```bash
-   ./gradlew :backend-intellij:buildPlugin
+   ./gradlew :analysis-cli:fatJar :analysis-cli:writeWrapperScript
    ```
 
-2. Start the sandbox IDE.
+2. Ensure a runtime for the target workspace.
 
    ```bash
-   ./gradlew :backend-intellij:runIde
-   ```
-
-3. Open the workspace you want Kast to serve.
-
-4. Wait for the project-scoped service to start and write a descriptor under
-   `<workspace>/.kast/instances/`, or under `KAST_INSTANCE_DIR` if you set that
-   environment variable first.
-
-5. Read the descriptor and connect to the advertised `host` and `port`.
-
-> **Note:** The IntelliJ host starts one Kast server per open workspace. It
-> binds to `127.0.0.1`, picks an ephemeral port, and uses fixed startup limits
-> of `maxResults = 500`, `requestTimeoutMillis = 30000`, and
-> `maxConcurrentRequests = 4`.
-
-## Use the standalone host
-
-Use the standalone host when you need Kast outside IntelliJ, or when you want
-to wire it into CI and scripts.
-
-1. Build the standalone distribution from the repo root.
-
-   ```bash
-   ./gradlew :backend-standalone:fatJar \
-     :backend-standalone:writeWrapperScript
-   ```
-
-2. Start the wrapper script with an absolute workspace path.
-
-   ```bash
-   ./backend-standalone/build/scripts/backend-standalone \
+   ./analysis-cli/build/scripts/analysis-cli \
+     workspace ensure \
      --workspace-root=/absolute/path/to/workspace
    ```
 
-3. Add overrides only when the default discovery path is not enough.
+3. Run analysis commands through the same CLI.
 
-   - Use `--source-roots` to replace automatic source-root discovery.
-   - Use `--classpath` to add absolute classpath entries.
-   - Use `--module-name` when you supply manual source roots.
-   - Use `--token` or `KAST_TOKEN` when you want protected routes.
+   ```bash
+   ./analysis-cli/build/scripts/analysis-cli \
+     diagnostics \
+     --workspace-root=/absolute/path/to/workspace \
+     --request-file=/absolute/path/to/query.json
+   ```
 
-4. Read the descriptor file and connect to the advertised `host` and `port`.
+4. Use `workspace status`, `daemon start`, and `daemon stop` when you need
+   explicit lifecycle control.
 
-> **Warning:** If you bind the standalone host to a non-loopback address, you
-> must also set a non-empty token. Kast rejects non-local binding without a
-> token.
+## Use direct standalone HTTP
 
-## Use both with one client flow
+Use direct HTTP only when a standalone runtime already exists and you want the
+raw route surface instead of the CLI wrapper.
 
-Kast is easier to integrate when your client treats the runtime host as a
-discovery result instead of a hardcoded mode.
+1. Get the selected runtime metadata from `workspace status` or by reading the
+   descriptor file directly.
+
+2. Call `/api/v1/health` or `/api/v1/capabilities` first.
+
+   ```bash
+   curl http://127.0.0.1:51234/api/v1/capabilities
+   ```
+
+3. Send the normal JSON request bodies once the runtime is confirmed ready.
+
+   ```bash
+   curl \
+     -X POST http://127.0.0.1:51234/api/v1/diagnostics \
+     -H 'Content-Type: application/json' \
+     -d '{"filePaths":["/absolute/path/to/workspace/src/main/kotlin/example/Foo.kt"]}'
+   ```
+
+The runtime is still the same standalone daemon the CLI would use; direct HTTP
+just means you are taking over readiness and descriptor handling yourself.
+
+## Keep one discovery flow
+
+Kast is easiest to integrate when the runtime is treated as a discovery result
+instead of a hardcoded local endpoint.
 
 ```mermaid
 graph LR
     Client["Client or agent"] --> Descriptor["Descriptor directory"]
-    Descriptor --> IntelliJ["IntelliJ host"]
-    Descriptor --> Standalone["Standalone host"]
+    Descriptor --> Standalone["Standalone daemon"]
+    Client --> Cli["analysis-cli"]
     Client --> Api["/api/v1/health and /api/v1/capabilities"]
 ```
 
-Use this flow when you want the same client to work in local development and
-headless environments.
-
 1. Read descriptor files from `<workspace>/.kast/instances/`, or from
    `KAST_INSTANCE_DIR` when you override the location.
-2. Select the descriptor that matches the target `workspaceRoot`, or filter by
-   `backendName` if you need one specific host.
+2. Select the descriptor that matches the target `workspaceRoot` and the sole
+   supported backend, `standalone`.
 3. Call `/api/v1/health` to confirm the runtime identity.
 4. Call `/api/v1/capabilities` and gate optional routes against the returned
    capabilities.
-5. Send the same request shapes regardless of which host answered.
-
-## Enable standalone usage in CI or scripts
-
-The standalone host fits automated environments because it does not depend on a
-running IDE. A minimal bootstrap looks like this.
-
-```bash
-./gradlew :backend-standalone:fatJar \
-  :backend-standalone:writeWrapperScript
-
-export KAST_TOKEN="ci-shared-secret"
-
-./backend-standalone/build/scripts/backend-standalone \
-  --workspace-root="$PWD" \
-  --token="$KAST_TOKEN"
-```
-
-If your automation already knows the workspace root, you can set
-`KAST_WORKSPACE_ROOT` instead of passing `--workspace-root`.
+5. Either keep using the CLI or send the same HTTP request shapes directly.
 
 ## Verify the runtime you started
 
-The startup path is complete when discovery and capability checks agree with
-the host you intended to use.
+The startup path is complete when discovery and capability checks agree with the
+standalone runtime you intended to use.
 
 - A descriptor file exists in the expected instance directory.
-- The descriptor reports the expected `workspaceRoot` and `backendName`.
+- The descriptor reports the expected `workspaceRoot` and `backendName = "standalone"`.
 - `/api/v1/health` returns `status: "ok"`.
 - `/api/v1/capabilities` advertises the routes your client plans to call.
 
 ## Next steps
 
 Read [Get started](get-started.md) for the first-request walkthrough. Use
-[Operator guide](operator-guide.md) when you need CLI flags, descriptor
+[Operator guide](operator-guide.md) when you need CLI commands, descriptor
 lifecycle details, or runtime defaults. Keep [HTTP API](api-reference.md)
 open when you are wiring a client against the contract.

@@ -8,7 +8,7 @@ repo.
 Assume every edit in this unit can affect the whole repo.
 
 - Keep this unit focused on build conventions: toolchains, shared test setup,
-  packaging, IntelliJ plugin defaults, and reusable dependency bundles.
+  packaging, and reusable dependency bundles.
 - Do not put product behavior or runtime code here. If a change affects the
   shipped server, it probably belongs in an application module instead.
 - Treat version bumps and plugin changes as cross-repo work. A small edit here

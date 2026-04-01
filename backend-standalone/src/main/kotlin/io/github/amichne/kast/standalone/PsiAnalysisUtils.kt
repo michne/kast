@@ -1,4 +1,4 @@
-package io.github.amichne.kast.common
+package io.github.amichne.kast.standalone
 
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiClass
@@ -21,9 +21,9 @@ import org.jetbrains.kotlin.psi.KtProperty
 
 /**
  * Walks the PSI element hierarchy up from [offset] until it finds a resolvable reference
- * or a named element, then returns it. Works in both IntelliJ-hosted and standalone modes.
+ * or a named element, then returns it.
  */
-fun resolveTarget(file: com.intellij.psi.PsiFile, offset: Int): PsiElement {
+internal fun resolveTarget(file: com.intellij.psi.PsiFile, offset: Int): PsiElement {
     val leaf = file.findElementAt(offset)
         ?: throw NotFoundException(
             message = "No PSI element was found at the requested offset",
@@ -41,7 +41,7 @@ fun resolveTarget(file: com.intellij.psi.PsiFile, offset: Int): PsiElement {
     throw NotFoundException("No resolvable symbol was found at the requested offset")
 }
 
-fun PsiElement.toSymbolModel(containingDeclaration: String?): Symbol = Symbol(
+internal fun PsiElement.toSymbolModel(containingDeclaration: String?): Symbol = Symbol(
     fqName = fqName(),
     kind = kind(),
     location = toKastLocation(nameRange()),
@@ -49,13 +49,13 @@ fun PsiElement.toSymbolModel(containingDeclaration: String?): Symbol = Symbol(
     containingDeclaration = containingDeclaration,
 )
 
-fun PsiElement.nameRange(): TextRange = when (this) {
+private fun PsiElement.nameRange(): TextRange = when (this) {
     is KtNamedDeclaration -> nameIdentifier?.textRange ?: textRange
     is PsiNameIdentifierOwner -> nameIdentifier?.textRange ?: textRange
     else -> textRange
 }
 
-fun PsiElement.declarationEdit(newName: String): TextEdit {
+internal fun PsiElement.declarationEdit(newName: String): TextEdit {
     val range = nameRange()
     return TextEdit(
         filePath = containingFile.virtualFile.path,
@@ -65,7 +65,7 @@ fun PsiElement.declarationEdit(newName: String): TextEdit {
     )
 }
 
-fun PsiElement.fqName(): String = when (this) {
+private fun PsiElement.fqName(): String = when (this) {
     is KtNamedDeclaration -> fqName?.asString() ?: name ?: "<anonymous>"
     is PsiClass -> qualifiedName ?: name ?: "<anonymous>"
     is PsiMethod -> "${containingClass?.qualifiedName ?: "<local>"}#$name"
@@ -74,7 +74,7 @@ fun PsiElement.fqName(): String = when (this) {
     else -> text
 }
 
-fun PsiElement.kind(): SymbolKind = when (this) {
+private fun PsiElement.kind(): SymbolKind = when (this) {
     is KtClass -> if (isInterface()) SymbolKind.INTERFACE else SymbolKind.CLASS
     is KtObjectDeclaration -> SymbolKind.OBJECT
     is KtNamedFunction -> SymbolKind.FUNCTION
@@ -86,7 +86,7 @@ fun PsiElement.kind(): SymbolKind = when (this) {
     else -> SymbolKind.UNKNOWN
 }
 
-fun PsiElement.typeDescription(): String? = when (this) {
+private fun PsiElement.typeDescription(): String? = when (this) {
     is KtNamedFunction -> typeReference?.text
     is KtProperty -> typeReference?.text
     is KtParameter -> typeReference?.text
@@ -97,9 +97,8 @@ fun PsiElement.typeDescription(): String? = when (this) {
 
 /**
  * Converts a PSI element and text range to a [Location] using raw file text.
- * Works in both IntelliJ-hosted and standalone modes without requiring a Document.
  */
-fun PsiElement.toKastLocation(range: TextRange = nameRange()): Location {
+internal fun PsiElement.toKastLocation(range: TextRange = nameRange()): Location {
     val content = containingFile.text
     val startOffset = range.startOffset.coerceIn(0, content.length)
     val endOffset = range.endOffset.coerceIn(startOffset, content.length)

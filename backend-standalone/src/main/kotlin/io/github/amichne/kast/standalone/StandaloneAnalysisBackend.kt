@@ -25,11 +25,6 @@ import io.github.amichne.kast.api.ServerLimits
 import io.github.amichne.kast.api.SymbolQuery
 import io.github.amichne.kast.api.SymbolResult
 import io.github.amichne.kast.api.TextEdit
-import io.github.amichne.kast.common.declarationEdit
-import io.github.amichne.kast.common.resolveTarget
-import io.github.amichne.kast.common.toApiDiagnostics
-import io.github.amichne.kast.common.toKastLocation
-import io.github.amichne.kast.common.toSymbolModel
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext

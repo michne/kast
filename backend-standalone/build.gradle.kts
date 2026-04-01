@@ -1,6 +1,21 @@
+import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.file.ConfigurableFileTree
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.DuplicatesStrategy
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.Sync
+import org.gradle.api.tasks.TaskAction
+import org.gradle.api.tasks.compile.JavaCompile
+import org.gradle.jvm.tasks.Jar
+import org.gradle.kotlin.dsl.creating
+import org.gradle.kotlin.dsl.getByType
+import org.gradle.kotlin.dsl.register
+import java.util.zip.ZipFile
 
 plugins {
     id("kas.standalone-app")
@@ -9,44 +24,111 @@ plugins {
 private val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
 private val intellijIdeaVersion = catalog.findVersion("intellij-idea").get().requiredVersion
 
-// Pinned to IJ 2025.3 (ij253) — must match the analysis-api-standalone-for-ide version.
-// CI starts from a cold Gradle home, so resolve backend-intellij's extraction task first
-// and then read the populated transform cache lazily.
-private fun locateIdeaHome(): File? = fileTree(gradle.gradleUserHomeDir.resolve("caches")) {
-    include("**/transformed/idea-$intellijIdeaVersion-*/plugins/Kotlin/lib/kotlin-plugin.jar")
-}.files.firstOrNull()?.parentFile?.parentFile?.parentFile?.parentFile
+val ideaDistribution by configurations.creating {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+}
 
-private fun requireIdeaHome(): File = locateIdeaHome()
-    ?: error(
-        "IntelliJ IDEA $intellijIdeaVersion distribution not found in the Gradle cache. " +
-            "Run './gradlew :backend-intellij:initializeIntellijPlatformPlugin' once to populate it.",
-    )
+private val extractedIdeaDistributionDirectory = layout.buildDirectory.dir("intellij-distribution")
 
-private fun ideaJarFiles(
-    relativePath: String,
+val extractIdeaDistribution by tasks.registering(Sync::class) {
+    from({
+        ideaDistribution.files.map(::zipTree)
+    })
+    into(extractedIdeaDistributionDirectory)
+    includeEmptyDirs = false
+}
+
+private fun extractedIdeaFiles(
     configure: ConfigurableFileTree.() -> Unit,
 ) = files(
-    providers.provider {
-        fileTree(requireIdeaHome().resolve(relativePath), configure).files
+    extractedIdeaDistributionDirectory.map { directory ->
+        fileTree(directory) {
+            configure()
+        }
     },
-)
+).builtBy(extractIdeaDistribution)
 
-private fun ideaFile(relativePath: String) = providers.provider {
-    requireIdeaHome().resolve(relativePath)
+private val appJar = extractedIdeaFiles {
+    include("**/lib/app.jar")
+    exclude("**/plugins/**")
 }
 
-val prepareIntellijPlatform by tasks.registering {
-    dependsOn(":backend-intellij:initializeIntellijPlatformPlugin")
+private val kotlinCompilerJar = extractedIdeaFiles {
+    include("**/plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar")
 }
 
-tasks.withType<KotlinCompile>().configureEach {
-    dependsOn(prepareIntellijPlatform)
+abstract class ExtractLegacyPluginClassesTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val ideaDistributionDirectory: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun extract() {
+        val distributionRoot = ideaDistributionDirectory.get().asFile
+        val compilerJar = distributionRoot.walkTopDown()
+            .firstOrNull { file ->
+                file.isFile && file.name == "kotlin-compiler.jar" &&
+                    file.invariantSeparatorsPath.contains("/plugins/Kotlin/kotlinc/lib/")
+            }
+            ?: throw GradleException(
+                "IntelliJ IDEA distribution under $distributionRoot did not contain plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar.",
+            )
+
+        val excludedEntries = setOf(
+            "com/intellij/ide/plugins/ContainerDescriptor.class",
+            "com/intellij/ide/plugins/IdeaPluginDescriptorImpl.class",
+            "com/intellij/ide/plugins/IdeaPluginDescriptorImplKt.class",
+            "com/intellij/ide/plugins/PluginDescriptorLoader.class",
+            "com/intellij/ide/plugins/PluginDescriptorLoader\$loadForCoreEnv\$1.class",
+            "com/intellij/ide/plugins/DataLoader.class",
+            "com/intellij/ide/plugins/ImmutableZipFileDataLoader.class",
+            "com/intellij/ide/plugins/NonShareableJavaZipFilePool.class",
+        )
+        val excludedPrefixes = listOf(
+            "com/intellij/ide/plugins/ImmutableZipFileDataLoader\$",
+            "com/intellij/ide/plugins/NonShareableJavaZipFilePool\$",
+        )
+        val outputRoot = outputDirectory.get().asFile
+        project.delete(outputRoot)
+        outputRoot.mkdirs()
+
+        ZipFile(compilerJar).use { archive ->
+            val entries = archive.entries()
+            while (entries.hasMoreElements()) {
+                val entry = entries.nextElement()
+                if (entry.isDirectory) {
+                    continue
+                }
+
+                val name = entry.name
+                val included =
+                    name.startsWith("com/intellij/ide/plugins/") && name.endsWith(".class") ||
+                        name == "com/intellij/util/messages/ListenerDescriptor.class"
+                val excluded = name in excludedEntries || excludedPrefixes.any(name::startsWith)
+                if (!included || excluded) {
+                    continue
+                }
+
+                val target = outputRoot.resolve(name)
+                target.parentFile.mkdirs()
+                archive.getInputStream(entry).use { input ->
+                    target.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+            }
+        }
+    }
 }
 
-tasks.matching {
-    it.name in setOf("fatJar", "distZip", "installDist", "startScripts")
-}.configureEach {
-    dependsOn(prepareIntellijPlatform)
+val extractLegacyPluginClasses by tasks.registering(ExtractLegacyPluginClassesTask::class) {
+    dependsOn(extractIdeaDistribution)
+    ideaDistributionDirectory.set(extractedIdeaDistributionDirectory)
+    outputDirectory.set(layout.buildDirectory.dir("legacy-plugin-classes"))
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -69,24 +151,17 @@ tasks.matching {
 //  └─────────────────────────┴─────────────────────────────────────────────────────────┘
 //
 // ContainerDescriptor is special: IJ 2025.3's ParserElementsConversionKt calls the
-// 4-arg constructor, while the AA calls getServices().  Neither old nor new provides
+// 4-arg constructor, while the AA calls getServices(). Neither old nor new provides
 // both; we compile a hybrid that does.
 //
 // The compat JAR is placed FIRST on the classpath to win the class-loading race for
 // the classes listed above that must come from kotlin-compiler.jar.
 // ───────────────────────────────────────────────────────────────────────────────
 
-// Compile compat bridge sources.
-// ContainerDescriptor: JDK-only (raw List types).
-// PathResolver / PluginXmlPathResolver: need app.jar (new API types) +
-//   kotlin-compiler.jar (old RawPluginDescriptor, ReadModuleContext, XmlReader, StaxFactory).
 val compileCompatJava by tasks.registering(JavaCompile::class) {
-    dependsOn(prepareIntellijPlatform)
+    dependsOn(extractIdeaDistribution)
     source = fileTree("src/compat/java") { include("**/*.java") }
-    classpath = files(
-        ideaFile("lib/app.jar"),
-        ideaFile("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar"),
-    )
+    classpath = files(appJar, kotlinCompilerJar)
     destinationDirectory.set(layout.buildDirectory.dir("compat-classes"))
     sourceCompatibility = "11"
     targetCompatibility = "11"
@@ -94,73 +169,43 @@ val compileCompatJava by tasks.registering(JavaCompile::class) {
 }
 
 val buildIdeCompatJar by tasks.registering(Jar::class) {
-    dependsOn(prepareIntellijPlatform)
+    dependsOn(compileCompatJava, extractLegacyPluginClasses)
     archiveFileName.set("ide-plugin-compat.jar")
     destinationDirectory.set(layout.buildDirectory.dir("compat"))
     // 1. Hybrid ContainerDescriptor must come first to win the duplicate race.
     from(compileCompatJava)
-    from(
-        zipTree(
-            ideaFile("plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar"),
-        ),
-    ) {
-        // Include all plugin-descriptor parsing classes that the AA
-        // (PluginStructureProvider) needs in their OLD (kotlin-compiler.jar) form.
-        include("com/intellij/ide/plugins/**/*.class")
-        // ListenerDescriptor moved out of the compiler copy in IJ 2025.3's runtime libs,
-        // but the AA still writes the old mutable pluginDescriptor field.
-        include("com/intellij/util/messages/ListenerDescriptor.class")
-        // ContainerDescriptor — replaced by our hybrid above.
-        exclude("com/intellij/ide/plugins/ContainerDescriptor.class")
-        // IdeaPluginDescriptorImpl — must use the IJ 2025.3 app.jar version (abstract class)
-        // so that PluginMainDescriptor / PluginModuleDescriptor can extend it.  The old version
-        // is final and causes IncompatibleClassChangeError when those subclasses are loaded.
-        exclude("com/intellij/ide/plugins/IdeaPluginDescriptorImpl.class")
-        exclude("com/intellij/ide/plugins/IdeaPluginDescriptorImplKt.class")
-        // PluginDescriptorLoader — must use the IJ 2025.3 app.jar version so that
-        // CoreApplicationEnvironment.registerExtensionPointAndExtensions() creates the correct
-        // PluginMainDescriptor (new API) rather than the old IdeaPluginDescriptorImpl.
-        exclude("com/intellij/ide/plugins/PluginDescriptorLoader.class")
-        exclude("com/intellij/ide/plugins/PluginDescriptorLoader\$loadForCoreEnv\$1.class")
-        // NonShareableJavaZipFilePool — the new PluginDescriptorLoader immediately casts it to
-        // ZipEntryResolverPool; the old version doesn't implement that interface → ClassCastException.
-        exclude("com/intellij/ide/plugins/NonShareableJavaZipFilePool.class")
-        exclude("com/intellij/ide/plugins/NonShareableJavaZipFilePool\$*.class")
-        // ImmutableZipFileDataLoader — new PluginDescriptorLoader calls new constructor
-        // (ZipEntryResolverPool$EntryResolver, Path); old version has different constructor signature.
-        exclude("com/intellij/ide/plugins/ImmutableZipFileDataLoader.class")
-        exclude("com/intellij/ide/plugins/ImmutableZipFileDataLoader\$*.class")
-        // DataLoader — new version adds getEmptyDescriptorIfCannotResolve() as a default method;
-        // new PluginDescriptorLoader calls it, which would fail with NoSuchMethodError on the old
-        // interface. The new version is a superset: all old methods (load, toString,
-        // isExcludedFromSubSearch) are still present.
-        exclude("com/intellij/ide/plugins/DataLoader.class")
-    }
+    from(extractLegacyPluginClasses)
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val ideaLibs = ideaJarFiles("lib") {
-    include("**/*.jar")
+val ideaLibs = extractedIdeaFiles {
+    include("**/lib/**/*.jar")
+    exclude("**/plugins/**")
     // testFramework.jar auto-registers ThreadLeakTrackerExtension (JUnit 5 extension)
     // which needs --add-opens for javax.swing and is not needed for standalone analysis.
-    exclude("testFramework.jar")
-    exclude("testFramework-k1.jar")
+    exclude("**/testFramework.jar")
+    exclude("**/testFramework-k1.jar")
 }
-val kotlinPluginLibs = ideaJarFiles("plugins/Kotlin/lib") {
-    include("**/*.jar")
+val kotlinPluginLibs = extractedIdeaFiles {
+    include("**/plugins/Kotlin/lib/**/*.jar")
     // kotlin-jps-plugin.jar ships an old Java CompilerConfiguration (no Kotlin companion)
     // that shadows the correct version in kotlin-compiler-common.jar → NoSuchFieldError.
-    exclude("jps/**")
+    exclude("**/plugins/Kotlin/lib/jps/**")
 }
-val javaPluginLibs = ideaJarFiles("plugins/java/lib") { include("**/*.jar") }
+val javaPluginLibs = extractedIdeaFiles {
+    include("**/plugins/java/lib/**/*.jar")
+}
 
 application {
     mainClass = "io.github.amichne.kast.standalone.StandaloneMainKt"
 }
 
 dependencies {
+    ideaDistribution("com.jetbrains.intellij.idea:ideaIC:$intellijIdeaVersion@zip") {
+        isTransitive = false
+    }
+
     implementation(project(":analysis-api"))
-    implementation(project(":analysis-common"))
     implementation(project(":analysis-server"))
     implementation(libs.analysis.api.standalone) {
         isTransitive = false

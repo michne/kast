@@ -1,39 +1,48 @@
 ---
 title: Implementation plan
-description: Sequencing plan for moving Kast from bootstrap to a fuller backend
-  pair.
+description: Sequencing plan for the CLI-managed standalone runtime.
 icon: lucide/clipboard-list
 ---
 
 # Implementation plan
 
-This plan captures the intended implementation order after the initial
-bootstrap. Read it as the next sequencing target, not as a statement that every
-phase is already complete.
+This plan captures the remaining implementation order after the repository
+moved to a CLI-managed standalone runtime. Read it as a sequencing target, not
+as a statement that every phase is already complete.
 
-### Phase 1: Prove the architecture (first pass)
+### Phase 1: Stabilize the standalone-only architecture
 
 Build order, each step validates the previous:
 
-1. **`:analysis-api`** — Define `AnalysisBackend`, all model types, capability enums. Pure Kotlin, compiles in seconds, zero external deps. This is the contract everything else depends on.
+1. **`:analysis-api`** — Keep `AnalysisBackend`, model types, and capability
+   enums stable. This is the contract everything else depends on.
 
-2. **`:shared-testing`** — `FakeAnalysisBackend` (in-memory, returns canned results) + contract test suite that asserts response shapes. These tests run against *any* `AnalysisBackend` implementation — they're how you verify both real backends conform.
+2. **`:shared-testing`** — Keep the fake backend and contract test suite honest
+   so every production path still conforms to the same response shapes.
 
-3. **`:analysis-server`** — Ktor routes wired to a `FakeAnalysisBackend`. Verify the HTTP layer works end-to-end with curl/httpie. This is deployable and testable before either real backend exists.
+3. **`:analysis-server`** — Keep Ktor routes and descriptor handling stable so
+   the HTTP layer stays testable and backend-agnostic.
 
-4. **`:backend-intellij`** — Implement `resolveSymbol` and `findReferences` first (these prove PSI access works through the server). Then `rename` (proves mutation path). Then `callHierarchy` and `diagnostics`.
+4. **`:backend-standalone`** — Keep `resolveSymbol`, `findReferences`,
+   `diagnostics`, `rename`, and `applyEdits` working end to end through the
+   Kotlin Analysis API session.
 
-5. **`:backend-standalone`** — Implement `resolveSymbol` and `diagnostics` first (these prove the Analysis API session initializes and resolves correctly). Then `findReferences` and `rename`. `callHierarchy` last (requires the most AA surface area).
+5. **`:analysis-cli`** — Keep `workspace status`, `workspace ensure`, daemon
+   lifecycle commands, and analysis subcommands deterministic and JSON-first.
 
 ### Phase 2: Harden
 
 - File content hashing to detect stale edits
-- `ReadAction.nonBlocking` + cancellation for long-running IntelliJ queries
-- Standalone backend: warm index cache on startup, incremental re-index on file change notification
-- Schema version enforcement (server rejects clients with mismatched `schema_version`)
+- Standalone backend: warm index cache on startup, incremental re-index on file
+  change notification
+- Remove the compat JAR once upstream standalone Analysis API aligns with
+  stable IntelliJ `2025.3` internals
+- Schema version enforcement (server rejects clients with mismatched
+  `schema_version`)
 
 ### Phase 3: Expand
 
-- Additional mutations: `extractFunction`, `inlineVariable`, `safeDelete` (IntelliJ-only initially)
+- Additional mutations: `extractFunction`, `inlineVariable`, `safeDelete` when
+  the standalone backend can plan them safely
 - Workspace-wide operations: `workspaceSymbols` (fuzzy symbol search)
 - Event stream: SSE endpoint for push-based diagnostics (file-save triggered)

@@ -1,16 +1,14 @@
 ---
 title: Get started
-description: Start a Kast runtime, discover its descriptor, and make your
-  first API requests.
+description: Build the CLI, ensure a standalone runtime, and make your first
+  requests.
 icon: lucide/rocket
 ---
 
-Kast lets you point the same client workflow at either an IntelliJ-backed
-server or a standalone JVM process. This guide gets you from a clean checkout
-to a running instance and a first HTTP request.
-
-Use [Choose a runtime](choose-a-runtime.md) first if you are still deciding
-whether to start Kast inside IntelliJ or as a standalone process.
+Kast now supports one runtime model: the repo-local CLI ensures a standalone
+daemon for a workspace, then you can keep using the CLI or call the daemon's
+HTTP endpoint directly. This guide gets you from a clean checkout to a running
+instance and a first request.
 
 > **Note:** The Gradle build uses Java 21.
 
@@ -21,130 +19,112 @@ workspace you want Kast to analyze.
 
 - Java 21
 - This repository
-- One workspace to open in IntelliJ or pass to the standalone process
+- One workspace to pass to the standalone runtime
 
-## Build a runtime
+## Build the CLI
 
-Choose the runtime that matches where you want analysis to run. The client
-surface stays the same after startup.
+Build the repo-local CLI distribution from the repo root.
 
-=== "IntelliJ plugin"
+```bash
+./gradlew writeWrapperScript
+```
 
-    Use this path for local development when you want PSI-backed reads and
-    rename planning from a running IDE.
+The CLI fat JAR contains the standalone backend and can start detached runtime
+processes for you.
 
-    1. Build the plugin:
+## Ensure a workspace runtime
 
-        ```bash
-        ./gradlew :backend-intellij:buildPlugin
-        ```
+Start or reuse the standalone daemon for the target workspace.
 
-    2. Start the sandbox IDE:
+```bash
+./analysis-cli/build/scripts/analysis-cli \
+  workspace ensure \
+  --workspace-root=/absolute/path/to/workspace
+```
 
-        ```bash
-        ./gradlew :backend-intellij:runIde
-        ```
+That command prints JSON describing the selected standalone runtime. It starts
+the daemon only when the workspace does not already have one healthy, ready
+instance.
 
-    3. Open the target workspace in the sandbox IDE.
+Optional follow-up commands:
 
-    4. Wait for the plugin to start one project-scoped Kast server and write a
-       descriptor file.
-
-=== "Standalone process"
-
-    Use this path for headless workflows and CI.
-
-    1. Build the standalone distribution:
-
-        ```bash
-        ./gradlew :backend-standalone:fatJar :backend-standalone:writeWrapperScript
-        ```
-
-    2. Start the runtime for a workspace:
-
-        ```bash
-        ./backend-standalone/build/scripts/backend-standalone \
-          --workspace-root=/absolute/path/to/workspace
-        ```
-
-    3. By default, the standalone host scans conventional source roots and
-       auto-discovers Gradle multi-module workspaces. Use `--source-roots`,
-       `--classpath`, or `--module-name` only when you need to override that
-       discovery.
-
-    4. Optional: add `--token=shared-secret` if you want protected routes to
-       require the `X-Kast-Token` header.
+- `workspace status`: inspect descriptor, liveness, readiness, and capabilities
+- `daemon start`: force a detached standalone daemon start
+- `daemon stop`: stop the matching daemon and clean up its descriptor
 
 ## Discover the instance
 
-Both runtimes register themselves by writing a `ServerInstanceDescriptor` JSON
-file under `<workspace>/.kast/instances/` by default. Set `KAST_INSTANCE_DIR`
-if you want to override the directory.
+The standalone runtime registers itself by writing a `ServerInstanceDescriptor`
+JSON file under `<workspace>/.kast/instances/` by default. Set
+`KAST_INSTANCE_DIR` if you want to override the directory.
 
 When the workspace lives in Git and Kast uses the default workspace-local
 directory, Kast adds `/.kast/` to the repo-local `.git/info/exclude` file so
 the metadata stays untracked without changing the committed `.gitignore`.
 
-Each descriptor includes the values your client needs to connect:
+You can inspect the current state through the CLI:
 
-```json
-{
-  "workspaceRoot": "/absolute/path/to/workspace",
-  "backendName": "intellij",
-  "backendVersion": "0.1.0",
-  "host": "127.0.0.1",
-  "port": 51234,
-  "token": null,
-  "pid": 12345,
-  "schemaVersion": 1
-}
+```bash
+./analysis-cli/build/scripts/analysis-cli \
+  workspace status \
+  --workspace-root=/absolute/path/to/workspace
 ```
+
+The selected descriptor reports `backendName = "standalone"` and includes the
+resolved `host`, `port`, and `pid`.
 
 ## Make your first requests
 
-Once you have the descriptor, read its `host` and `port` values and call the
-discovery endpoints first.
+The CLI keeps the request and response JSON machine-readable, so it is the
+recommended default path.
 
-1. Call the health endpoint:
+1. Inspect the advertised capabilities:
+
+    ```bash
+    ./analysis-cli/build/scripts/analysis-cli \
+      capabilities \
+      --workspace-root=/absolute/path/to/workspace
+    ```
+
+2. Send an analysis request with an absolute request file:
+
+    ```bash
+    ./analysis-cli/build/scripts/analysis-cli \
+      diagnostics \
+      --workspace-root=/absolute/path/to/workspace \
+      --request-file=/absolute/path/to/query.json
+    ```
+
+3. Optional: call the daemon directly over HTTP after you read the descriptor:
 
     ```bash
     curl http://127.0.0.1:51234/api/v1/health
     ```
 
-2. Inspect the advertised capabilities:
-
-    ```bash
-    curl http://127.0.0.1:51234/api/v1/capabilities
-    ```
-
-3. Send an analysis request with an absolute file path and byte offset:
-
-    ```bash
-    curl \
-      -X POST http://127.0.0.1:51234/api/v1/symbol/resolve \
-      -H 'Content-Type: application/json' \
-      -d '{
-        "position": {
-          "filePath": "/absolute/path/to/Foo.kt",
-          "offset": 142
-        }
-      }'
-    ```
-
 If the runtime descriptor includes a token, add
 `-H 'X-Kast-Token: shared-secret'` to protected routes.
+
+Example `diagnostics` request file:
+
+```json
+{
+  "filePaths": [
+    "/absolute/path/to/workspace/src/main/kotlin/example/Foo.kt"
+  ]
+}
+```
 
 ## Verify the result
 
 You know the bootstrap worked when all three of these conditions are true.
 
 - A descriptor file appears in the instance directory.
-- `/api/v1/health` returns `status: "ok"`.
-- `/api/v1/capabilities` matches the host you started.
+- `workspace status` reports one selected standalone runtime.
+- `capabilities` advertises the routes your client plans to call.
 
 ## Next steps
 
 Read [HTTP API](api-reference.md) to wire a client against the contract. Use
-[Choose a runtime](choose-a-runtime.md) when you need the host-selection guide.
-Keep [Operator guide](operator-guide.md) nearby for runtime defaults, CLI
-flags, or descriptor lifecycle details.
+[Runtime model](choose-a-runtime.md) when you need the supported transport
+choices. Keep [Operator guide](operator-guide.md) nearby for runtime defaults,
+CLI commands, or descriptor lifecycle details.

@@ -1,7 +1,7 @@
 plugins {
-    `java-library`
     kotlin("jvm")
     kotlin("plugin.serialization")
+    `java-library`
 }
 
 private val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")

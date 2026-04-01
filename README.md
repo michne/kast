@@ -1,29 +1,33 @@
 # Kast
 
-Kast is a Kotlin analysis server with one HTTP/JSON contract and two runtime
-hosts:
-
-- an IntelliJ plugin for local development
-- a standalone JVM process for CI and headless workflows
+Kast is a Kotlin analysis server with one HTTP/JSON contract and one supported
+runtime path: a repo-local CLI manages a standalone JVM daemon for local
+automation, editor integrations, and CI.
 
 The repo is organized as a Gradle multi-module build:
 
 - `analysis-api`: shared contract, models, errors, and edit validation
+- `analysis-cli`: CLI control plane for workspace status, ensure, daemon
+    lifecycle, and request dispatch
 - `analysis-server`: Ktor transport, descriptor file handling, and HTTP routes
-- `backend-intellij`: IntelliJ-hosted backend and plugin entrypoint
-- `backend-standalone`: standalone runtime entrypoint
+- `backend-standalone`: standalone runtime entrypoint plus Kotlin Analysis API
+    integration
 - `shared-testing`: fake backend fixtures used by server and backend tests
 
 ## Current state
 
-The bootstrap and first vertical slice are in place:
+The standalone-first migration is now the supported shape of the repository:
 
-- the Gradle build, convention plugins, and module structure exist
-- the HTTP server, descriptor file workflow, and edit-application path work
-- the IntelliJ backend provides PSI-backed symbol resolution, references,
-  rename planning, and Kotlin semantic diagnostics for Kotlin files
+- the repo-local CLI can ensure a workspace runtime, report status, and dispatch
+    analysis operations as JSON
 - the standalone backend provides symbol resolution, references, diagnostics,
-  rename planning, and edit application through the shared HTTP contract
+    rename planning, and edit application through the shared HTTP contract
+- the runtime registers itself through workspace-local descriptor files under
+    `.kast/instances/`
+- the standalone build fetches IntelliJ IDEA `2025.3` directly as a declared
+    dependency for the Analysis API bridge instead of depending on another
+    module's warmed Gradle cache
 
-The main remaining work is to bring `callHierarchy` online and harden the
-standalone dependency path so it does not depend on the IntelliJ build cache.
+The main remaining production gap is `callHierarchy`. The standalone backend
+also still carries a small compatibility JAR while the upstream standalone
+Analysis API catches up with the stable IntelliJ `2025.3` runtime APIs.

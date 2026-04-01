@@ -5,9 +5,10 @@ description: Route map, request conventions, and capability gating for the
 icon: lucide/braces
 ---
 
-Kast exposes one HTTP/JSON contract at `/api/v1`. The routes are stable across
-runtime hosts, while the actual feature set depends on the capabilities each
-backend advertises at startup.
+Kast exposes one HTTP/JSON contract at `/api/v1`. The supported runtime is the
+standalone daemon managed by `analysis-cli`; the route map stays stable, while
+the actual feature set still depends on the capabilities the daemon advertises
+at startup.
 
 ## Request conventions
 
@@ -37,20 +38,19 @@ against the advertised capability set.
 | `/api/v1/rename` | `POST` | `RENAME` | `dryRun` defaults to `true`; returns planned edits and file hashes. |
 | `/api/v1/edits/apply` | `POST` | `APPLY_EDITS` | Applies prepared `TextEdit` values against the provided file hashes. |
 
-## Current host matrix
+## Current capability set
 
 The route map is broader than the currently implemented production behavior.
-Use the capability response, not the runtime name alone, as the source of
-truth.
+Use the capability response as the source of truth.
 
-| Capability | IntelliJ plugin | Standalone process | Notes |
-| --- | --- | --- | --- |
-| `RESOLVE_SYMBOL` | Yes | Yes | IntelliJ resolves against PSI and indices; standalone resolves against the Kotlin Analysis API. |
-| `FIND_REFERENCES` | Yes | Yes | Both hosts return locations and optional declarations. |
-| `CALL_HIERARCHY` | No | No | The route exists, but production support is not implemented. |
-| `DIAGNOSTICS` | Yes | Yes | IntelliJ reports Kotlin semantic diagnostics for Kotlin files and falls back to PSI parse errors for other PSI; standalone reports Kotlin Analysis API diagnostics. |
-| `RENAME` | Yes | Yes | The response is a text edit plan in both hosts. |
-| `APPLY_EDITS` | Yes | Yes | This is the shared mutation primitive across both hosts. |
+| Capability | Standalone daemon | Notes |
+| --- | --- | --- |
+| `RESOLVE_SYMBOL` | Yes | Resolved through the Kotlin Analysis API. |
+| `FIND_REFERENCES` | Yes | Returns locations and an optional declaration. |
+| `CALL_HIERARCHY` | No | The route exists, but production support is not implemented. |
+| `DIAGNOSTICS` | Yes | Reports Kotlin Analysis API diagnostics. |
+| `RENAME` | Yes | Returns a text edit plan. |
+| `APPLY_EDITS` | Yes | Applies prepared `TextEdit` values against current file hashes. |
 
 ## Minimal payloads
 
@@ -97,7 +97,7 @@ the edit set before touching the workspace.
 
 ## Next steps
 
-Use [Choose a runtime](choose-a-runtime.md) if you need to decide which host to
-start. Use [Get started](get-started.md) if you still need a running instance.
-Keep [Operator guide](operator-guide.md) nearby when you need the descriptor
-fields, CLI flags, or runtime defaults.
+Use [Runtime model](choose-a-runtime.md) if you need to decide between the CLI
+and direct HTTP. Use [Get started](get-started.md) if you still need a running
+instance. Keep [Operator guide](operator-guide.md) nearby when you need the
+descriptor fields, CLI commands, or runtime defaults.
