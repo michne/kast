@@ -19,9 +19,14 @@ switch between manual use and automation.
 | `kast help` | Print the full command list | Use `kast help <topic>` for a narrower help page |
 | `kast --help` | Print the same top-level help page | Useful in scripts that prefer flags |
 | `kast --version` | Print the CLI version | `kast version` also works |
+| `kast completion <bash\|zsh>` | Print an opt-in shell completion script | Supports Bash and Zsh |
 
 Every option uses `--key=value` syntax. Successful commands print JSON on
 stdout. Daemon notes, when present, print on stderr after the command.
+
+When Kast detects an interactive terminal, the help pages use ANSI color. If
+you need color in another context, set `CLICOLOR_FORCE=1` before you run the
+help command.
 
 ## Workspace lifecycle commands
 

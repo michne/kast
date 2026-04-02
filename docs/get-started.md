@@ -41,6 +41,32 @@ from your shell.
     The installer validates that Java 21 or newer is available before it
     unpacks the release.
 
+## Optional: enable shell completion
+
+The installer can offer to enable completion in your shell init file. If you
+accept that prompt, Bash or Zsh loads the generated completion script the next
+time the shell starts. If you skip the prompt or want to enable it manually,
+load the script yourself. The completion scripts cover the public command tree
+and the supported `--key=value` options.
+
+1. If the installer offers completion setup, accept the prompt to update your
+   shell init file automatically.
+
+2. In Bash, source the generated script manually when needed:
+
+   ```bash
+   source <(kast completion bash)
+   ```
+
+3. In Zsh, source the generated script manually when needed:
+
+   ```bash
+   source <(kast completion zsh)
+   ```
+
+4. Run `kast --help` if you want the grouped help page before the first
+   workspace command.
+
 ## Start or reuse a workspace runtime
 
 Use `workspace ensure` to attach Kast to one workspace. The command reuses a
@@ -109,6 +135,8 @@ mistakes.
   `--key=value` form.
 - If Kast cannot find the workspace or a file, convert the path to an absolute
   path and rerun the command.
+- If you want the shell-specific completion help pages, run
+  `kast help completion`.
 
 ## Next steps
 

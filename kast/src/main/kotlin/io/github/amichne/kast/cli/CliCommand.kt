@@ -9,6 +9,7 @@ import io.github.amichne.kast.api.SymbolQuery
 internal sealed interface CliCommand {
     data class Help(val topic: List<String> = emptyList()) : CliCommand
     data object Version : CliCommand
+    data class Completion(val shell: CliCompletionShell) : CliCommand
     data class WorkspaceStatus(val options: RuntimeCommandOptions) : CliCommand
     data class WorkspaceEnsure(val options: RuntimeCommandOptions) : CliCommand
     data class DaemonStart(val options: RuntimeCommandOptions) : CliCommand

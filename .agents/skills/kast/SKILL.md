@@ -107,7 +107,90 @@ If a needed capability is absent, see `references/troubleshooting.md#capability_
 
 ---
 
-## 4. Analysis Commands
+## 4. Resolving Named Symbols (Conversational Lookups)
+
+Most kast commands need `--offset`, but users will refer to symbols by name ("find references
+to `MyRepository`", "resolve `UserService`", "rename `handleClick`"). Bridge the gap with
+this two-step approach: **find the file + position first, then call kast**.
+
+### Step 1 — Locate the symbol in the codebase
+
+Use Grep to find declaration sites. Declaration patterns to try (in order):
+
+```bash
+# class / object / interface / enum / sealed / data class
+grep -rn "class MyClass\b" --include="*.kt" /workspace
+
+# fun
+grep -rn "fun myFunction\b" --include="*.kt" /workspace
+
+# val / var (property or top-level)
+grep -rn "\bval myProp\b\|\bvar myProp\b" --include="*.kt" /workspace
+
+# fallback: any occurrence
+grep -rn "\bMySymbol\b" --include="*.kt" /workspace
+```
+
+Pick the declaration site (the line with `class`/`fun`/`val`/`var`/etc.) over plain usages.
+
+### Step 2 — Compute the UTF-16 offset
+
+`find-symbol-offset.py` converts the grep result to the exact offset kast needs:
+
+```bash
+# From a symbol name — prints declaration sites first:
+python .agents/skills/kast/scripts/find-symbol-offset.py \
+  /absolute/path/to/File.kt \
+  --symbol MyClass
+
+# From a known line (1-based) and column (0-based, default 0):
+python .agents/skills/kast/scripts/find-symbol-offset.py \
+  /absolute/path/to/File.kt \
+  --line 42 --col 6
+```
+
+Output (one line per match):
+```
+<offset>\t<line>\t<col>\t<context-snippet>
+```
+
+Take the **first line** — that is the declaration offset (or the closest match when no
+declaration is found). Feed `<offset>` to `--offset=`.
+
+### Step 3 — Verify with symbol resolve
+
+Before running references or rename, confirm you have the right symbol:
+
+```bash
+"$KAST" symbol resolve \
+  --workspace-root=/absolute/path \
+  --file-path=/absolute/path/to/File.kt \
+  --offset=<offset-from-script>
+```
+
+Check `symbol.fqName` matches what the user described. If it does not (e.g. offset landed on
+whitespace), try the next offset from the script output or adjust `--col` by a few characters
+to the start of the identifier.
+
+### Quick pattern — name to references
+
+```
+User: "find references to HealthCheckService"
+
+1. Grep:   grep -rn "class HealthCheckService" --include="*.kt" /workspace
+           → src/main/kotlin/com/example/HealthCheckService.kt:12:class HealthCheckService(...)
+
+2. Offset: python find-symbol-offset.py .../HealthCheckService.kt --symbol HealthCheckService
+           → 347  12  6  class HealthCheckService(private val ...
+
+3. Verify: kast symbol resolve --offset=347  → fqName: com.example.HealthCheckService ✓
+
+4. Run:    kast references --file-path=.../HealthCheckService.kt --offset=347
+```
+
+---
+
+## 5. Analysis Commands
 
 All commands:
 - Output machine-readable JSON on stdout
@@ -208,7 +291,7 @@ Use the `edits` and `fileHashes` from a `rename` result directly as the request 
 
 ---
 
-## 5. Workflows
+## 6. Workflows
 
 ### Pre-Edit Intelligence
 
@@ -216,21 +299,23 @@ Before modifying a symbol, gather context:
 
 ```
 1. workspace ensure
-2. symbol resolve  → confirm symbol identity and kind
-3. references      → assess how many call sites exist
-4. capabilities    → confirm RENAME/APPLY_EDITS available if planning rename
+2. find offset (Section 4 — grep + find-symbol-offset.py if starting from a name)
+3. symbol resolve  → confirm symbol identity and kind
+4. references      → assess how many call sites exist
+5. capabilities    → confirm RENAME/APPLY_EDITS available if planning rename
 ```
 
 ### Safe Rename
 
 ```
 1. workspace ensure
-2. symbol resolve (--offset=<declaration offset>)  → confirm target
-3. rename --dry-run=true --new-name=NewName        → inspect affected files
-4. Review rename result edits (count, file spread)
-5. Write {edits, fileHashes} to /tmp/rename-apply.json
-6. edits apply --request-file=/tmp/rename-apply.json
-7. diagnostics on affected files                   → verify no new errors
+2. find offset: grep for declaration, then find-symbol-offset.py --symbol <Name>
+3. symbol resolve (--offset=<offset>)              → confirm target
+4. rename --dry-run=true --new-name=NewName        → inspect affected files
+5. Review rename result edits (count, file spread)
+6. Write {edits, fileHashes} to /tmp/rename-apply.json
+7. edits apply --request-file=/tmp/rename-apply.json
+8. diagnostics on affected files                   → verify no new errors
 ```
 
 If `edits apply` returns `CONFLICT`: re-run `rename` to get a fresh plan with updated hashes.
@@ -262,7 +347,7 @@ When a build fails or you need to understand errors in a file:
 
 ---
 
-## 6. Error Recovery
+## 7. Error Recovery
 
 | Error code | HTTP | Recovery |
 |-----------|------|----------|
@@ -277,7 +362,7 @@ For detailed decision trees: `references/troubleshooting.md`
 
 ---
 
-## 7. Command Syntax
+## 8. Command Syntax
 
 **Do:**
 - Use `--key=value` for every option: `--workspace-root=/path`, `--offset=123`
@@ -295,7 +380,7 @@ For detailed decision trees: `references/troubleshooting.md`
 
 ---
 
-## 8. Integration
+## 9. Integration
 
 | Task | Use |
 |------|-----|
@@ -313,7 +398,7 @@ kotlin-gradle-loop = **build and test iteration** (does it compile, do tests pas
 
 ---
 
-## 9. Reference Documents
+## 10. Reference Documents
 
 | Document | When to read |
 |----------|-------------|

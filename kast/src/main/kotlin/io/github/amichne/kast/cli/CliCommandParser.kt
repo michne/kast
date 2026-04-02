@@ -70,6 +70,8 @@ internal class CliCommandParser(
                 listOf("workspace", "ensure") -> CliCommand.WorkspaceEnsure(parsed.runtimeOptions())
                 listOf("daemon", "start") -> CliCommand.DaemonStart(parsed.runtimeOptions(backendName = "standalone"))
                 listOf("daemon", "stop") -> CliCommand.DaemonStop(parsed.runtimeOptions(backendName = "standalone"))
+                listOf("completion", "bash") -> CliCommand.Completion(CliCompletionShell.BASH)
+                listOf("completion", "zsh") -> CliCommand.Completion(CliCompletionShell.ZSH)
                 listOf("capabilities") -> CliCommand.Capabilities(parsed.runtimeOptions())
                 listOf("symbol", "resolve") -> CliCommand.ResolveSymbol(parsed.runtimeOptions(), parsed.symbolQuery(json))
                 listOf("references") -> CliCommand.FindReferences(parsed.runtimeOptions(), parsed.referencesQuery(json))

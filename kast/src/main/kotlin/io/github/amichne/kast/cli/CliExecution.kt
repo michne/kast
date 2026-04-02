@@ -32,7 +32,11 @@ internal class DefaultCliCommandExecutor(
             )
 
             CliCommand.Version -> CliExecutionResult(
-                output = CliOutput.Text("Kast CLI ${currentCliVersion()}"),
+                output = CliOutput.Text(CliCommandCatalog.versionText()),
+            )
+
+            is CliCommand.Completion -> CliExecutionResult(
+                output = CliOutput.Text(CliCompletionScripts.render(command.shell)),
             )
 
             is CliCommand.WorkspaceStatus -> {

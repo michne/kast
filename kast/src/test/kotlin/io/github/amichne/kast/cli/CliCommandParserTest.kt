@@ -29,10 +29,24 @@ class CliCommandParserTest {
     }
 
     @Test
+    fun `completion namespace opens contextual help`() {
+        val command = parser.parse(arrayOf("completion"))
+
+        assertEquals(CliCommand.Help(listOf("completion")), command)
+    }
+
+    @Test
     fun `scoped help flag keeps the command topic`() {
         val command = parser.parse(arrayOf("workspace", "status", "--help"))
 
         assertEquals(CliCommand.Help(listOf("workspace", "status")), command)
+    }
+
+    @Test
+    fun `completion bash parses to completion command`() {
+        val command = parser.parse(arrayOf("completion", "bash"))
+
+        assertEquals(CliCommand.Completion(CliCompletionShell.BASH), command)
     }
 
     @Test

@@ -15,15 +15,69 @@ readonly SCRIPT_DIR="$(resolve_script_dir)"
 readonly DEFAULT_RELEASE_REPO="amichne/kast"
 readonly GITHUB_API_ACCEPT="Accept: application/vnd.github+json"
 readonly GITHUB_API_VERSION="X-GitHub-Api-Version: 2022-11-28"
+readonly PATH_MARKER="# Added by the Kast installer"
+readonly COMPLETION_START_MARKER="# >>> Kast completion >>>"
+readonly COMPLETION_END_MARKER="# <<< Kast completion <<<"
 
 tmp_dir=""
 
+supports_color() {
+  if [[ "${CLICOLOR_FORCE:-}" == "1" ]]; then
+    return 0
+  fi
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    return 1
+  fi
+  if [[ ! -t 2 ]]; then
+    return 1
+  fi
+  [[ "${TERM:-}" != "dumb" ]]
+}
+
+colorize() {
+  local code="$1"
+  shift
+
+  if supports_color; then
+    printf '\033[%sm%s\033[0m' "$code" "$*"
+    return
+  fi
+
+  printf '%s' "$*"
+}
+
+log_line() {
+  local label="$1"
+  local message="$2"
+  printf '%s %s\n' "$label" "$message" >&2
+}
+
 log() {
-  printf '%s\n' "$*" >&2
+  log_line "$(colorize '2' '│')" "$*"
+}
+
+log_section() {
+  printf '\n%s\n' "$(colorize '1;36' "$*")" >&2
+}
+
+log_step() {
+  log_line "$(colorize '1;34' '›')" "$*"
+}
+
+log_success() {
+  log_line "$(colorize '1;32' '✓')" "$*"
+}
+
+log_note() {
+  log_line "$(colorize '33' '•')" "$*"
+}
+
+log_prompt() {
+  printf '%s %s' "$(colorize '1;34' '?')" "$*" >/dev/tty
 }
 
 die() {
-  log "error: $*"
+  log_line "$(colorize '1;31' '✕')" "$*"
   exit 1
 }
 
@@ -268,6 +322,18 @@ resolve_shell_rc_file() {
   esac
 }
 
+resolve_shell_name() {
+  local shell_name="${SHELL##*/}"
+  case "$shell_name" in
+    bash | zsh)
+      printf '%s\n' "$shell_name"
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
 ensure_bin_dir_on_path() {
   local bin_dir="$1"
 
@@ -276,7 +342,7 @@ ensure_bin_dir_on_path() {
   fi
 
   if [[ "${KAST_SKIP_PATH_UPDATE:-false}" == "true" ]]; then
-    log "Add ${bin_dir} to PATH before running kast."
+    log_note "Add ${bin_dir} to PATH before running kast."
     return
   fi
 
@@ -284,25 +350,153 @@ ensure_bin_dir_on_path() {
   rc_file="$(resolve_shell_rc_file)"
 
   if [[ -z "$rc_file" ]]; then
-    log "Add ${bin_dir} to PATH before running kast."
+    log_note "Add ${bin_dir} to PATH before running kast."
     return
   fi
 
   mkdir -p "$(dirname -- "$rc_file")"
   touch "$rc_file"
 
-  local marker="# Added by the Kast installer"
-  if ! grep -Fq "$marker" "$rc_file"; then
+  if ! grep -Fq "$PATH_MARKER" "$rc_file"; then
     cat >>"$rc_file" <<EOF
 
-$marker
+$PATH_MARKER
 export PATH="$bin_dir:\$PATH"
 EOF
-    log "Added ${bin_dir} to PATH in ${rc_file}"
+    log_success "Added ${bin_dir} to PATH in ${rc_file}"
+    return
   fi
+
+  log_step "PATH already includes the Kast installer block in ${rc_file}"
+}
+
+resolve_completion_mode() {
+  case "${KAST_INSTALL_COMPLETIONS:-prompt}" in
+    "" | prompt | auto)
+      printf '%s\n' "prompt"
+      ;;
+    true | yes | 1)
+      printf '%s\n' "enable"
+      ;;
+    false | no | 0)
+      printf '%s\n' "disable"
+      ;;
+    *)
+      die "KAST_INSTALL_COMPLETIONS must be one of: prompt, true, false"
+      ;;
+  esac
+}
+
+can_prompt() {
+  [[ -r /dev/tty && -w /dev/tty ]]
+}
+
+prompt_yes_no() {
+  local message="$1"
+  local default_answer="${2:-yes}"
+  local prompt_suffix="[Y/n]"
+  local reply=""
+
+  if [[ "$default_answer" == "no" ]]; then
+    prompt_suffix="[y/N]"
+  fi
+
+  while true; do
+    log_prompt "${message} ${prompt_suffix} "
+    if ! IFS= read -r reply </dev/tty; then
+      printf '\n' >/dev/tty
+      return 1
+    fi
+    printf '\n' >/dev/tty
+
+    case "${reply,,}" in
+      "")
+        [[ "$default_answer" == "yes" ]]
+        return
+        ;;
+      y | yes)
+        return 0
+        ;;
+      n | no)
+        return 1
+        ;;
+    esac
+  done
+}
+
+install_shell_completion() {
+  local release_dir="$1"
+  local install_root="$2"
+  local shell_name="$3"
+
+  if [[ -z "$shell_name" ]]; then
+    log_note "Shell completion setup is available for Bash and Zsh. Run \`kast help completion\` for manual instructions."
+    return
+  fi
+
+  local completion_dir="${release_dir}/completions"
+  local completion_file="${completion_dir}/kast.${shell_name}"
+  local completion_stderr="${tmp_dir}/completion-${shell_name}.stderr"
+  local rc_file
+  rc_file="$(resolve_shell_rc_file)"
+
+  mkdir -p "$completion_dir"
+  if ! "${release_dir}/kast" completion "$shell_name" >"$completion_file" 2>"$completion_stderr"; then
+    rm -f "$completion_file" "$completion_stderr"
+    log_note "This Kast build does not expose \`completion ${shell_name}\` yet, so the installer skipped shell completion setup."
+    return
+  fi
+  rm -f "$completion_stderr"
+  log_success "Generated ${shell_name} completion script at ${completion_file}"
+
+  if [[ -z "$rc_file" ]]; then
+    log_note "Open a shell init file and source ${install_root}/current/completions/kast.${shell_name} to enable completions."
+    return
+  fi
+
+  mkdir -p "$(dirname -- "$rc_file")"
+  touch "$rc_file"
+
+  if grep -Fq "$COMPLETION_START_MARKER" "$rc_file"; then
+    log_step "Shell completion is already configured in ${rc_file}"
+    return
+  fi
+
+  local completion_mode
+  completion_mode="$(resolve_completion_mode)"
+
+  if [[ "$completion_mode" == "disable" ]]; then
+    log_note "Skipped shell completion setup. You can enable it later from ${install_root}/current/completions/kast.${shell_name}."
+    return
+  fi
+
+  if [[ "$completion_mode" == "prompt" ]]; then
+    if ! can_prompt; then
+      log_note "Skipped interactive completion setup because no terminal prompt is available."
+      log_note "To enable it later, source ${install_root}/current/completions/kast.${shell_name} from ${rc_file}."
+      return
+    fi
+    if ! prompt_yes_no "Enable ${shell_name} completions in ${rc_file}?" "yes"; then
+      log_note "Skipped shell completion setup. You can enable it later from ${install_root}/current/completions/kast.${shell_name}."
+      return
+    fi
+  fi
+
+  cat >>"$rc_file" <<EOF
+
+$COMPLETION_START_MARKER
+if [[ -r "${install_root}/current/completions/kast.${shell_name}" ]]; then
+  source "${install_root}/current/completions/kast.${shell_name}"
+fi
+$COMPLETION_END_MARKER
+EOF
+  log_success "Enabled ${shell_name} completions in ${rc_file}"
 }
 
 main() {
+  log_section "Kast installer"
+  log "Install the published CLI, wire your shell, and leave the workspace commands ready to run."
+
   need_tool curl
   need_tool python3
 
@@ -319,21 +513,25 @@ main() {
   local archive_source
   local release_tag
   local archive_digest
+  local shell_name
 
   release_repo="$(resolve_release_repo)"
   platform_id="$(detect_platform_id)"
   install_root="${KAST_INSTALL_ROOT:-${HOME}/.local/share/kast}"
   bin_dir="${KAST_BIN_DIR:-${HOME}/.local/bin}"
+  shell_name="$(resolve_shell_name)"
 
   tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/kast-install.XXXXXX")"
 
   if [[ -n "${KAST_ARCHIVE_PATH:-}" ]]; then
+    log_section "Resolve release"
     archive_path="$KAST_ARCHIVE_PATH"
     [[ -f "$archive_path" ]] || die "KAST_ARCHIVE_PATH does not exist: $archive_path"
     archive_name="$(basename -- "$archive_path")"
     archive_source="$archive_path"
     release_tag="${KAST_VERSION:-local}"
     archive_digest="${KAST_EXPECTED_SHA256:-}"
+    log_step "Using local archive ${archive_name}"
   else
     local metadata_url="${KAST_RELEASE_METADATA_URL:-}"
     if [[ -z "$metadata_url" ]]; then
@@ -345,7 +543,8 @@ main() {
     fi
 
     local metadata_path="${tmp_dir}/release.json"
-    log "Resolving release metadata for ${release_repo} (${platform_id})"
+    log_section "Resolve release"
+    log_step "Resolving release metadata for ${release_repo} (${platform_id})"
     curl \
       --fail \
       --location \
@@ -367,17 +566,19 @@ main() {
     archive_digest="${release_info[3]}"
     archive_path="${tmp_dir}/${archive_name}"
 
-    log "Downloading ${archive_name}"
+    log_step "Downloading ${archive_name}"
     download_file "$archive_source" "$archive_path"
   fi
 
+  log_section "Verify package"
   if [[ -n "$archive_digest" ]]; then
     local expected_sha256="${archive_digest#sha256:}"
     local actual_sha256
     actual_sha256="$(compute_sha256 "$archive_path")"
     [[ "$actual_sha256" == "$expected_sha256" ]] || die "Checksum verification failed for ${archive_name}"
+    log_success "Verified SHA-256 for ${archive_name}"
   else
-    log "No published SHA-256 digest was available for ${archive_name}; skipping checksum verification."
+    log_note "No published SHA-256 digest was available for ${archive_name}; skipping checksum verification."
   fi
 
   local staging_dir="${tmp_dir}/extract"
@@ -385,6 +586,7 @@ main() {
   local current_link="${install_root}/current"
   local bin_link="${bin_dir}/kast"
 
+  log_section "Install files"
   extract_zip_archive "$archive_path" "$staging_dir"
   [[ -d "${staging_dir}/kast" ]] || die "Archive ${archive_name} did not contain the expected kast/ directory"
 
@@ -412,15 +614,21 @@ set -euo pipefail
 exec "${install_root}/current/kast" "\$@"
 EOF
   chmod +x "$bin_link"
-  ensure_bin_dir_on_path "$bin_dir"
+  log_success "Installed ${archive_name} into ${release_dir}"
 
-  log "Installed ${archive_name} into ${release_dir}"
-  log "Launcher path: ${bin_link}"
+  log_section "Shell setup"
+  ensure_bin_dir_on_path "$bin_dir"
+  install_shell_completion "$release_dir" "$install_root" "$shell_name"
+
+  log_section "Ready"
+  log_success "Launcher path: ${bin_link}"
   if path_contains "$bin_dir"; then
-    log "Next step: kast workspace ensure --workspace-root=/absolute/path/to/workspace"
+    log_step "Try: kast --help"
+    log_step "Then: kast workspace ensure --workspace-root=/absolute/path/to/workspace"
   else
-    log "Next step: export PATH=\"${bin_dir}:\$PATH\""
-    log "Then run: kast workspace ensure --workspace-root=/absolute/path/to/workspace"
+    log_note "Export PATH=\"${bin_dir}:\$PATH\""
+    log_note "Then run: kast --help"
+    log_note "Then run: kast workspace ensure --workspace-root=/absolute/path/to/workspace"
   fi
 }
 

@@ -76,6 +76,18 @@ class KastWrapperTest {
         }
     }
 
+    @Test
+    fun `wrapper exposes bash completion script`() {
+        val completion = runCli(
+            "completion",
+            "bash",
+        )
+
+        assertTrue(completion.stdout.contains("__kast_complete"))
+        assertTrue(completion.stdout.contains("workspace"))
+        assertEquals("", completion.stderr)
+    }
+
     private fun runCli(
         vararg args: String,
         allowFailure: Boolean = false,

@@ -24,8 +24,34 @@ class KastCliTest {
 
         assertEquals(0, exitCode)
         assertTrue(stdout.toString().contains("Kast CLI"))
-        assertTrue(stdout.toString().contains("Commands:"))
+        assertTrue(stdout.toString().contains("Workspace lifecycle"))
+        assertTrue(stdout.toString().contains("completion bash"))
         assertEquals("", stderr.toString())
+    }
+
+    @Test
+    fun `completion prints shell script to stdout`() {
+        val stdout = StringBuilder()
+        val stderr = StringBuilder()
+
+        val exitCode = KastCli().run(arrayOf("completion", "bash"), stdout, stderr)
+
+        assertEquals(0, exitCode)
+        assertTrue(stdout.toString().contains("__kast_complete"))
+        assertTrue(stdout.toString().contains("complete -o default -o nospace -F __kast_complete kast"))
+        assertEquals("", stderr.toString())
+    }
+
+    @Test
+    fun `help can render ansi styling when requested`() {
+        val help = CliCommandCatalog.helpText(
+            topic = emptyList(),
+            version = "dev",
+            theme = CliTextTheme.ansi(),
+        )
+
+        assertTrue(help.contains("\u001B["))
+        assertTrue(help.contains("Shell integration"))
     }
 
     @Test

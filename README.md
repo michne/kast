@@ -32,6 +32,9 @@ out, you can run `./install.sh` from the repo root instead.
 
 ## How to use it
 
+Use `kast --help` for the grouped command overview before you move into the
+JSON-returning commands.
+
 Start or reuse a runtime for a workspace:
 
 ```bash
@@ -64,6 +67,27 @@ kast \
 Successful commands print JSON on stdout. Daemon lifecycle notes go to stderr.
 
 The main remaining production gap is `callHierarchy`.
+
+## Optional: enable shell completion
+
+The installer can offer to enable completion in your shell init file. If you
+skip that prompt or want to enable it later, Kast can still print opt-in
+completion scripts for the public command tree and the supported
+`--key=value` options.
+
+Bash:
+
+```bash
+source <(kast completion bash)
+```
+
+Zsh:
+
+```bash
+source <(kast completion zsh)
+```
+
+Run `kast help completion` if you want the shell-specific command pages.
 
 ## Build from source
 

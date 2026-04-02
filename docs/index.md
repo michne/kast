@@ -8,7 +8,9 @@ icon: lucide/network
 Kast has one supported operator path: run the repo-local `kast` command
 against the workspace you want to analyze. These pages focus on the flow that
 works today: install the CLI, ensure a workspace runtime, run analysis
-commands, and stop the runtime when you are done.
+commands, and stop the runtime when you are done. The installer can also offer
+to wire Bash or Zsh completions into your shell init file while it sets up the
+launcher.
 
 !!! note
     The current supported flow does not advertise `callHierarchy` yet.
@@ -63,12 +65,16 @@ first.
 Kast stays consistent across commands so you can move between tasks without
 relearning the interface.
 
+- Run `kast --help` for the grouped command overview. In interactive terminals,
+  the help page uses ANSI color.
 - Use `--key=value` syntax for command options.
 - Pass absolute paths for `--workspace-root`, `--file-path`, and
   `--request-file`.
 - Expect successful results as machine-readable JSON on stdout.
 - Expect daemon lifecycle notes, when present, on stderr.
 - Keep Java 21 or newer available on your path or under `JAVA_HOME`.
+- Let the installer enable Bash or Zsh completions if you want tab completion
+  immediately.
 
 ## A typical Kast session
 
@@ -76,10 +82,12 @@ Most sessions follow the same short loop, even when the specific analysis task
 changes.
 
 1. Install the published CLI with the copyable installer or `./install.sh`
-   from a checkout.
-2. Start or reuse a workspace runtime with `kast workspace ensure`.
-3. Inspect `kast capabilities`, then run the analysis command you need.
-4. Stop the workspace daemon with `kast daemon stop` when you are done.
+   from a checkout, and enable shell completion if the installer offers it.
+2. Open `kast --help` to confirm the grouped command view and your first
+   completion-enabled shell.
+3. Start or reuse a workspace runtime with `kast workspace ensure`.
+4. Inspect `kast capabilities`, then run the analysis command you need.
+5. Stop the workspace daemon with `kast daemon stop` when you are done.
 
 ## Next steps
 
