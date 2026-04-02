@@ -1,6 +1,6 @@
 package io.github.amichne.kast.cli
 
-private const val CLI_EXECUTABLE_NAME = "analysis-cli"
+private const val CLI_EXECUTABLE_NAME = "kast"
 
 internal data class CliOptionMetadata(
     val usage: String,

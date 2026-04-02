@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
 
-class AnalysisCliWrapperTest {
+class KastWrapperTest {
     @TempDir
     lateinit var tempDir: Path
 
@@ -80,14 +80,14 @@ class AnalysisCliWrapperTest {
         vararg args: String,
         allowFailure: Boolean = false,
     ): ProcessResult {
-        val wrapper = checkNotNull(System.getProperty("analysisCli.wrapper")) {
-            "analysisCli.wrapper system property is missing"
+        val wrapper = checkNotNull(System.getProperty("kast.wrapper")) {
+            "kast.wrapper system property is missing"
         }
         val process = ProcessBuilder(listOf(wrapper) + args)
             .directory(Path.of("").toAbsolutePath().toFile())
             .start()
         val finished = process.waitFor(90, TimeUnit.SECONDS)
-        check(finished) { "analysis-cli wrapper timed out: ${args.joinToString(" ")}" }
+        check(finished) { "kast wrapper timed out: ${args.joinToString(" ")}" }
         val stdout = process.inputStream.readAllBytes().toString(Charsets.UTF_8)
         val stderr = process.errorStream.readAllBytes().toString(Charsets.UTF_8)
         if (!allowFailure) {

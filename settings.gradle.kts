@@ -17,7 +17,7 @@ dependencyResolutionManagement {
 
 include(
     ":analysis-api",
-    ":analysis-cli",
+    ":kast",
     ":analysis-server",
     ":backend-standalone",
     ":shared-testing",

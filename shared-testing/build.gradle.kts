@@ -1,5 +1,5 @@
 plugins {
-    id("kas.testing-fixtures")
+    id("kast.testing-fixtures")
 }
 
 dependencies {

@@ -1,12 +1,12 @@
 # Kast
 
 Kast is a Kotlin analysis tool for real Kotlin workspaces. The current right
-way to use it is the repo-local `analysis-cli` command.
+way to use it is the repo-local `kast` command.
 
 The repo is organized as a Gradle multi-module build:
 
 - `analysis-api`: shared contract, models, errors, and edit validation
-- `analysis-cli`: CLI control plane for workspace status, ensure, daemon
+- `kast`: CLI control plane for workspace status, ensure, daemon
     lifecycle, and request dispatch
 - `analysis-server`: request dispatch and daemon transport plumbing
 - `backend-standalone`: standalone runtime entrypoint plus Kotlin Analysis API
@@ -18,13 +18,13 @@ The repo is organized as a Gradle multi-module build:
 Build the CLI from the repo root:
 
 ```bash
-./gradlew :analysis-cli:syncRuntimeLibs :analysis-cli:writeWrapperScript
+./gradlew :kast:syncRuntimeLibs :kast:writeWrapperScript
 ```
 
 Start or reuse a runtime for a workspace:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   workspace ensure \
   --workspace-root=/absolute/path/to/workspace
 ```
@@ -32,11 +32,11 @@ Start or reuse a runtime for a workspace:
 Run analysis commands the same way:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   capabilities \
   --workspace-root=/absolute/path/to/workspace
 
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   diagnostics \
   --workspace-root=/absolute/path/to/workspace \
   --request-file=/absolute/path/to/query.json
@@ -45,7 +45,7 @@ Run analysis commands the same way:
 Stop the daemon when you need to:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   daemon stop \
   --workspace-root=/absolute/path/to/workspace
 ```

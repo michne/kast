@@ -13,10 +13,10 @@ class ProcessLauncherTest {
     @Test
     fun `single fat jar with runtime libs launches on extracted classpath`() {
         val libsDirectory = java.nio.file.Files.createDirectories(tempDir.resolve("libs"))
-        val jarPath = libsDirectory.resolve("analysis-cli-0.1.0-SNAPSHOT-all.jar").createFile()
+        val jarPath = libsDirectory.resolve("kast-0.1.0-SNAPSHOT-all.jar").createFile()
         val runtimeLibs = tempDir.resolve("runtime-libs")
         java.nio.file.Files.createDirectories(runtimeLibs)
-        val mainJar = runtimeLibs.resolve("analysis-cli-0.1.0-SNAPSHOT.jar").createFile()
+        val mainJar = runtimeLibs.resolve("kast-0.1.0-SNAPSHOT.jar").createFile()
         val depJar = runtimeLibs.resolve("analysis-server-0.1.0-SNAPSHOT.jar").createFile()
         runtimeLibs.resolve("classpath.txt").toFile().writeText(
             listOf(mainJar.fileName.toString(), depJar.fileName.toString()).joinToString("\n", postfix = "\n"),
@@ -45,7 +45,7 @@ class ProcessLauncherTest {
 
     @Test
     fun `single fat jar classpath launches with java jar mode`() {
-        val jarPath = tempDir.resolve("analysis-cli-0.1.0-SNAPSHOT-all.jar").createFile()
+        val jarPath = tempDir.resolve("kast-0.1.0-SNAPSHOT-all.jar").createFile()
 
         val command = detachedJavaCommand(
             javaExecutable = "/usr/bin/java",

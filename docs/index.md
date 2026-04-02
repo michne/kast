@@ -4,7 +4,7 @@ description: The one supported way to run Kast against a workspace.
 icon: lucide/network
 ---
 
-Kast has one supported path: run the repo-local `analysis-cli` command against
+Kast has one supported path: run the repo-local `kast` command against
 the workspace you want to analyze. Build the CLI once, ensure a runtime for the
 workspace, and then run analysis commands through that same CLI.
 
@@ -13,7 +13,7 @@ workspace, and then run analysis commands through that same CLI.
 Build the wrapper and bundled runtime files from the repo root:
 
 ```bash
-./gradlew :analysis-cli:syncRuntimeLibs :analysis-cli:writeWrapperScript
+./gradlew :kast:syncRuntimeLibs :kast:writeWrapperScript
 ```
 
 ## Start a workspace runtime
@@ -21,7 +21,7 @@ Build the wrapper and bundled runtime files from the repo root:
 Start or reuse the standalone runtime for the workspace:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   workspace ensure \
   --workspace-root=/absolute/path/to/workspace
 ```
@@ -34,17 +34,17 @@ prints a short daemon note on stderr.
 Run every supported operation through the same CLI:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   capabilities \
   --workspace-root=/absolute/path/to/workspace
 
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   symbol resolve \
   --workspace-root=/absolute/path/to/workspace \
   --file-path=/absolute/path/to/File.kt \
   --offset=123
 
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   diagnostics \
   --workspace-root=/absolute/path/to/workspace \
   --request-file=/absolute/path/to/query.json
@@ -68,7 +68,7 @@ Supported commands today:
 Stop the workspace daemon when you are done:
 
 ```bash
-./analysis-cli/build/scripts/analysis-cli \
+./kast/build/scripts/kast \
   daemon stop \
   --workspace-root=/absolute/path/to/workspace
 ```

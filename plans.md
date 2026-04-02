@@ -11,7 +11,7 @@ Decision
 - Stop supporting IntelliJ-hosted runtime discovery, transport selection, and
   plugin packaging.
 - Prefer deletion over shims or export layers.
-- Keep `:analysis-api`, `:analysis-server`, `:analysis-cli`, and one standalone
+- Keep `:analysis-api`, `:analysis-server`, `:kast`, and one standalone
   backend path.
 - Treat `analysis-common` as disposable. If it cannot be made host-neutral
   cheaply, fold its PSI/K2 code into `:backend-standalone` and delete it.
@@ -36,7 +36,7 @@ Phases
    - Remove `:backend-intellij` from `settings.gradle.kts`.
    - Remove `org.jetbrains.intellij.platform.settings` from
 	 `settings.gradle.kts` if nothing else needs it.
-   - Delete `build-logic/src/main/kotlin/kas.intellij-plugin.gradle.kts` and
+   - Delete `build-logic/src/main/kotlin/kast.intellij-plugin.gradle.kts` and
 	 any now-dead plugin wiring.
    - Prune IntelliJ plugin version metadata from `gradle/libs.versions.toml`
 	 and any unused repositories added only for plugin packaging.
@@ -66,7 +66,7 @@ Phases
 	 relies on `:backend-intellij` side effects.
 
 5. Simplify CLI and runtime selection to one backend.
-   - Remove `intellij` as a runtime/backend option from `analysis-cli`.
+   - Remove `intellij` as a runtime/backend option from `kast`.
    - Delete `backendPreferenceRank("intellij")` paths and any
 	 `backendName == "intellij"` branches.
    - Simplify request routing, daemon management, and skill wrappers so they
@@ -87,7 +87,7 @@ Phases
 7. Sweep for dead dependencies and module edges.
    - Verify `analysis-api` and `analysis-server` remain free of IntelliJ-only
 	 dependencies.
-   - Revisit `analysis-cli/build.gradle.kts` after the refactor; it currently
+   - Revisit `kast/build.gradle.kts` after the refactor; it currently
 	 depends on `:backend-standalone`, which may be acceptable or may need a
 	 cleaner boundary later.
    - Remove any orphaned repositories, versions, test wiring, or Gradle tasks
@@ -99,7 +99,7 @@ Validation
 Run these in order as the migration lands:
 
 1. `./gradlew :backend-standalone:build`
-2. `./gradlew :analysis-cli:build`
+2. `./gradlew :kast:build`
 3. `./gradlew :analysis-server:test`
 4. `./gradlew build`
 

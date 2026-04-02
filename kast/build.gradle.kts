@@ -3,15 +3,15 @@ import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.testing.Test
 
 plugins {
-    id("kas.standalone-app")
+    id("kast.standalone-app")
 }
 
 application {
     mainClass = "io.github.amichne.kast.cli.CliMainKt"
 }
 
-val helperSource = layout.projectDirectory.file("src/helper/analysis_cli_helper.c")
-val helperBinary = layout.buildDirectory.file("bin/analysis-cli-helper")
+val helperSource = layout.projectDirectory.file("src/helper/kast_helper.c")
+val helperBinary = layout.buildDirectory.file("bin/kast-helper")
 
 dependencies {
     implementation(project(":analysis-api"))
@@ -56,9 +56,9 @@ tasks.named("writeWrapperScript").configure {
                 "",
                 "script_dir=\"${dollar}(cd -- \"${dollar}(dirname -- \"${dollar}{BASH_SOURCE[0]}\")\" >/dev/null 2>&1 && pwd)\"",
                 "helper_candidates=(",
-                "  \"${dollar}{KAST_CLI_HELPER:-}\"",
-                "  \"${dollar}{script_dir}/bin/analysis-cli-helper\"",
-                "  \"${dollar}{script_dir}/../bin/analysis-cli-helper\"",
+                "  \"${dollar}{KAST_HELPER:-}\"",
+                "  \"${dollar}{script_dir}/bin/kast-helper\"",
+                "  \"${dollar}{script_dir}/../bin/kast-helper\"",
                 ")",
                 "",
                 "for candidate in \"${dollar}{helper_candidates[@]}\"; do",
@@ -93,7 +93,7 @@ tasks.named("writeWrapperScript").configure {
                 "  fi",
                 "done",
                 "",
-                "echo \"Could not locate analysis-cli helper or runtime-libs\" >&2",
+                "echo \"Could not locate kast helper or runtime-libs\" >&2",
                 "exit 1",
             ).joinToString(System.lineSeparator()),
         )
@@ -112,7 +112,7 @@ tasks.named<Test>("test") {
     dependsOn(compileHelper)
     dependsOn(tasks.named("writeWrapperScript"))
     systemProperty(
-        "analysisCli.wrapper",
+        "kast.wrapper",
         layout.buildDirectory.file("scripts/${project.name}").get().asFile.absolutePath,
     )
 }

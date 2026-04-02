@@ -18,7 +18,7 @@ import org.gradle.kotlin.dsl.register
 import java.util.zip.ZipFile
 
 plugins {
-    id("kas.standalone-app")
+    id("kast.standalone-app")
 }
 
 private val catalog = extensions.getByType<VersionCatalogsExtension>().named("libs")

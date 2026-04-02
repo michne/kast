@@ -1,5 +1,5 @@
 plugins {
-    id("kas.kotlin-library")
+    id("kast.kotlin-library")
 }
 
 dependencies {

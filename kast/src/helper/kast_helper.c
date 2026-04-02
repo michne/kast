@@ -629,7 +629,7 @@ static char *java_executable(void) {
 static void exec_java_main(const char *helper_dir, const char *main_class, int argc, char **argv) {
     char *runtime_libs_dir = find_runtime_libs_dir(helper_dir);
     if (runtime_libs_dir == NULL) {
-        die("Could not locate runtime-libs for analysis-cli helper");
+        die("Could not locate runtime-libs for kast helper");
     }
     char *classpath = build_runtime_classpath(runtime_libs_dir);
     free(runtime_libs_dir);

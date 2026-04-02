@@ -27,7 +27,7 @@ Use this map to choose the narrowest unit that owns a change.
 
 - `analysis-api`: shared contract, serializable models, errors, file edit
   validation, and disk edit helpers
-- `analysis-cli`: repo-local CLI control plane, detached daemon management,
+- `kast`: repo-local CLI control plane, detached daemon management,
   runtime readiness checks, and request dispatch
 - `analysis-server`: Ktor transport, capability gating, auth, request limits,
   and descriptor lifecycle
@@ -54,7 +54,7 @@ Apply these rules across the repo before local unit rules add more detail.
   intentionally changing across the stack.
 - Keep capability gating honest. A route or backend must not advertise support
   for work it cannot actually perform.
-- Respect the current architecture: `analysis-cli` owns the operator-facing
+- Respect the current architecture: `kast` owns the operator-facing
   control plane, `analysis-server` owns HTTP transport, `backend-standalone`
   owns runtime behavior, and `shared-testing` stays out of production code
   paths.

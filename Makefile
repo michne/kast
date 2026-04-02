@@ -1,15 +1,15 @@
-# Makefile to produce a single distributable unit for the analysis-cli module.
+# Makefile to produce a single distributable unit for the kast module.
 # Targets:
-#   make cli         -> build fat JAR, emit wrapper, package into dist/analysis-cli
-#   make cli-zip     -> build a single portable zip in dist/analysis-cli.zip
+#   make cli         -> build fat JAR, emit wrapper, package into dist/kast
+#   make cli-zip     -> build a single portable zip in dist/kast.zip
 #   make clean-dist  -> remove dist/
 #   make run         -> run packaged CLI (help)
 
 .PHONY: all cli cli-zip clean-dist run
 all: cli
 
-CLI_NAME=analysis-cli
-MODULE_DIR=analysis-cli
+CLI_NAME=kast
+MODULE_DIR=kast
 BUILD_DIR=$(MODULE_DIR)/build
 SCRIPTS_DIR=$(BUILD_DIR)/scripts
 LIBS_DIR=$(BUILD_DIR)/libs
@@ -31,7 +31,7 @@ cli:
 	chmod +x $(TMP_DIST_DIR)/$(CLI_NAME)
 	cp $(LIBS_DIR)/*-all.jar $(TMP_DIST_DIR)/libs/
 	cp $(RUNTIME_LIBS_DIR)/* $(TMP_DIST_DIR)/runtime-libs/
-	cp $(BIN_DIR)/analysis-cli-helper $(TMP_DIST_DIR)/bin/
+	cp $(BIN_DIR)/kast-helper $(TMP_DIST_DIR)/bin/
 	rm -rf $(DIST_DIR)
 	mv $(TMP_DIST_DIR) $(DIST_DIR)
 	@echo "Packaged $(CLI_NAME) into $(DIST_DIR)"

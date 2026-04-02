@@ -5,7 +5,7 @@ import org.gradle.jvm.tasks.Jar
 
 plugins {
     application
-    id("kas.kotlin-library")
+    id("kast.kotlin-library")
 }
 
 tasks.named<Jar>("jar") {
