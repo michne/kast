@@ -1,94 +1,81 @@
 ---
-title: How to use Kast
-description: The one supported way to run Kast against a workspace.
+title: Kast docs
+description: Install Kast, start a workspace runtime, and run the supported
+  Kotlin analysis flow through the repo-local CLI.
 icon: lucide/network
 ---
 
-Kast has one supported path: run the repo-local `kast` command against
-the workspace you want to analyze. Install the published CLI once, ensure a
-runtime for the workspace, and then run analysis commands through that same
-CLI.
+Kast has one supported operator path: run the repo-local `kast` command
+against the workspace you want to analyze. These pages focus on the flow that
+works today: install the CLI, ensure a workspace runtime, run analysis
+commands, and stop the runtime when you are done.
 
-## Install the published CLI
+!!! note
+    The current supported flow does not advertise `callHierarchy` yet.
 
-Install the latest published release into this checkout:
+## Start with the page that matches your goal
 
-```bash
-./install.sh
-```
+This short doc set is organized around the jobs people usually need to do
+first.
 
-That script installs `kast` into your user-local bin directory and adds that
-directory to your shell `PATH` when needed.
+<div class="grid cards" markdown>
 
-> **Note:** The published bundle still expects Java 21 or newer on your path or
-> under `JAVA_HOME`.
+-   __Get started__
 
-## Start a workspace runtime
+    ---
 
-Start or reuse the standalone runtime for the workspace:
+    Install the published CLI, start a workspace runtime, and verify that the
+    workspace is ready for analysis.
 
-```bash
-kast \
-  workspace ensure \
-  --workspace-root=/absolute/path/to/workspace
-```
+    [Open the guide](get-started.md)
 
-That command prints JSON on stdout. If Kast starts or reuses a daemon, it also
-prints a short daemon note on stderr.
+-   __Run analysis commands__
 
-## Run analysis commands
+    ---
 
-Run every supported operation through the same CLI:
+    Use the common read and mutation commands with examples that stay close to
+    the current CLI surface.
 
-```bash
-kast \
-  capabilities \
-  --workspace-root=/absolute/path/to/workspace
+    [Open the guide](run-analysis-commands.md)
 
-kast \
-  symbol resolve \
-  --workspace-root=/absolute/path/to/workspace \
-  --file-path=/absolute/path/to/File.kt \
-  --offset=123
+-   __Command reference__
 
-kast \
-  diagnostics \
-  --workspace-root=/absolute/path/to/workspace \
-  --request-file=/absolute/path/to/query.json
-```
+    ---
 
-Supported commands today:
+    Keep the public command list, key options, and support boundaries nearby
+    while you work.
 
-- `workspace status`
-- `workspace ensure`
-- `daemon start`
-- `daemon stop`
-- `capabilities`
-- `symbol resolve`
-- `references`
-- `diagnostics`
-- `rename`
-- `edits apply`
+    [Open the guide](command-reference.md)
 
-## Stop the runtime
+</div>
 
-Stop the workspace daemon when you are done:
+## What every Kast command has in common
 
-```bash
-kast \
-  daemon stop \
-  --workspace-root=/absolute/path/to/workspace
-```
+Kast stays consistent across commands so you can move between tasks without
+relearning the interface.
 
-## Build an unpublished change
+- Use `--key=value` syntax for command options.
+- Pass absolute paths for `--workspace-root`, `--file-path`, and
+  `--request-file`.
+- Expect successful results as machine-readable JSON on stdout.
+- Expect daemon lifecycle notes, when present, on stderr.
+- Keep Java 21 or newer available on your path or under `JAVA_HOME`.
 
-If you are testing code that has not been published yet, build the portable
-distribution locally:
+## A typical Kast session
 
-```bash
-./gradlew :kast:portableDistZip
-```
+Most sessions follow the same short loop, even when the specific analysis task
+changes.
 
-## Current gap
+1. Install the published CLI with `./install.sh`.
+2. Start or reuse a workspace runtime with `kast workspace ensure`.
+3. Inspect `kast capabilities`, then run the analysis command you need.
+4. Stop the workspace daemon with `kast daemon stop` when you are done.
 
-The main remaining production gap is `callHierarchy`.
+## Next steps
+
+If you are new to Kast, start with the guided setup page. If you already have a
+running workspace daemon, jump straight to the task and reference pages.
+
+- [Get started](get-started.md)
+- [Run analysis commands](run-analysis-commands.md)
+- [Command reference](command-reference.md)
