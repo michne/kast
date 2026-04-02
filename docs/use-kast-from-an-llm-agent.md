@@ -5,61 +5,86 @@ description: Resolve Kotlin symbols and references through the packaged
 icon: lucide/book-open
 ---
 
-This guide explains how to use the packaged `kast` skill when an LLM agent
-needs semantic Kotlin lookup. The workflow is intentionally narrow: discover
-the CLI, ensure the workspace daemon, resolve the symbol, and then find
-references from the same workspace.
+This guide shows how to use the packaged `kast` skill when an LLM agent needs
+semantic Kotlin lookup. The workflow stays narrow on purpose: discover the
+CLI, ensure the workspace daemon, resolve the symbol, and then expand to
+references in the same workspace.
 
 !!! note
     The current packaged skill does not support `callHierarchy`. Use
     `symbol resolve` and `references` for semantic navigation today.
 
-## What the packaged skill owns
+## Take the shortest path
 
-The packaged skill removes a few operator decisions from the prompt. That
-matters because LLM workflows become unreliable when they hardcode binary
-paths, skip daemon startup, or guess at result semantics.
+If you want the fastest reliable workflow, follow this sequence before you add
+anything more advanced.
 
-| Skill behavior | Why it matters |
-| --- | --- |
-| Resolves the CLI with `bash .agents/skills/kast/scripts/resolve-kast.sh` | Avoids hardcoded binary paths and lets the skill find `kast` on `PATH`, in local build output, or through a one-time wrapper build |
-| Runs `workspace ensure` before analysis | Makes sure symbol and reference queries hit a ready daemon instead of a cold workspace |
-| Uses `--key=value` syntax and absolute paths | Keeps requests compatible with the public CLI contract |
-| Treats stdout JSON as the result and stderr as daemon notes | Prevents the agent from mixing control-plane notes into the semantic output |
-| Handles common failures such as `NOT_FOUND` and missing capabilities | Keeps the agent from reporting empty or misleading semantic results |
+1. Give the agent an absolute workspace root, an absolute file path, and a
+   zero-based UTF-16 offset.
+2. Ask the agent to use the packaged `kast` skill.
+3. Resolve the symbol first so the declaration identity is explicit.
+4. Run `references` against the same file path and offset.
+5. Report the declaration location, usage previews, and whether
+   `page.truncated` is `true`.
 
-## What you need to give the agent
+## Understand what the packaged skill handles
 
-The skill still needs a small amount of concrete input from you. If you keep
-these values explicit, the agent can run deterministically and report the
-result without guessing.
+The packaged skill removes a few decisions from the prompt so the agent does
+not guess at environment details or CLI behavior.
 
-| Input | Required | Example | Notes |
-| --- | --- | --- | --- |
-| Workspace root | Yes | `/absolute/path/to/workspace` | Must be the Kotlin workspace root that Kast should index |
-| File path | Yes | `/absolute/path/to/src/main/kotlin/sample/Use.kt` | Must be an absolute path inside the workspace |
-| Offset | Yes | `41` | Zero-based UTF-16 character offset from the start of the file |
-| Include declaration | References only | `true` | Returns the declaration in the same payload as the usage list |
-| Output expectation | Recommended | `return fqName, kind, declaration path, and callers` | Helps the agent summarize the JSON instead of pasting it back at you |
+- **CLI discovery:** The skill runs
+  `bash .agents/skills/kast/scripts/resolve-kast.sh` so it can find `kast` on
+  `PATH`, in local build output, in `dist/`, or through a one-time wrapper
+  build.
+- **Workspace lifecycle:** The skill runs `workspace ensure` before analysis so
+  symbol and reference queries hit a ready daemon instead of a cold workspace.
+- **CLI contract:** The skill uses `--key=value` syntax, absolute paths, and
+  stdout JSON as the semantic result.
+- **Control-plane separation:** The skill treats stderr as daemon notes, not as
+  the semantic answer.
+- **Failure handling:** The skill is expected to deal with missing
+  capabilities, `NOT_FOUND`, and other common runtime errors instead of
+  pretending the query succeeded.
+
+## Prepare the request
+
+The skill still needs concrete input from you. If you keep these values
+explicit, the agent can run deterministically and summarize the result without
+guessing.
+
+- **Workspace root:** Pass the Kotlin workspace root as an absolute path, for
+  example `/absolute/path/to/workspace`.
+- **File path:** Pass the target Kotlin file as an absolute path inside that
+  workspace.
+- **Offset:** Pass a zero-based UTF-16 character offset from the start of the
+  file.
+- **Declaration preference:** For `references`, decide whether you want the
+  declaration returned in the same payload with
+  `--include-declaration=true`.
+- **Output expectation:** Tell the agent what to summarize, for example
+  `fqName`, symbol kind, declaration location, and callers.
 
 !!! note
     If you only know a line and column, convert them to a zero-based UTF-16
     offset before you ask the agent to run Kast. Line and column coordinates
     are not accepted by the CLI.
 
-## Ask the agent to resolve a symbol
+## Resolve the symbol first
 
-Use `symbol resolve` first when you want to confirm what a token refers to
-before you ask broader questions. This is the safest way to anchor the rest of
-the workflow on the correct declaration.
+Use `symbol resolve` before you ask for broader impact. This anchors the rest
+of the workflow on the correct declaration instead of forcing the agent to
+infer identity from raw text.
 
 Example prompt for the agent:
 
 ```text
 Use the packaged `kast` skill to resolve the symbol at
-/absolute/path/to/src/main/kotlin/sample/Use.kt offset 41 in workspace
-/absolute/path/to/workspace. Return the fully qualified name, kind,
-declaration file, line, column, and type if present.
+/absolute/path/to/src/main/kotlin/sample/Use.kt
+offset 41
+in workspace /absolute/path/to/workspace.
+
+Return the fully qualified name, kind, declaration file, line, column,
+and type if present.
 ```
 
 The packaged skill aligns that request to this command sequence:
@@ -73,23 +98,31 @@ KAST=$(bash .agents/skills/kast/scripts/resolve-kast.sh)
   --offset=41
 ```
 
-The key result fields are `symbol.fqName`, `symbol.kind`, `symbol.location`,
-`symbol.type`, and `symbol.containingDeclaration`.
+When the result comes back, the agent must focus on these fields:
 
-## Ask the agent to find references
+- `symbol.fqName` for the stable symbol identity
+- `symbol.kind` to confirm the target type, such as `FUNCTION` or `PROPERTY`
+- `symbol.location.filePath`, `startLine`, and `startColumn` for the
+  declaration anchor
+- `symbol.type` and `symbol.containingDeclaration` when they are present
 
-Use `references` after symbol resolution when you want usage sites, caller
-discovery, or a rough change-impact check. Ask for the declaration in the same
-result when the agent needs one response that contains both the definition and
-the usage list.
+## Expand to references
+
+Use `references` after symbol resolution when you want caller discovery, usage
+sites, or a rough change-impact check. Ask for the declaration in the same
+payload when you want one response that contains both the definition and the
+usage list.
 
 Example prompt for the agent:
 
 ```text
 Use the packaged `kast` skill to find references for the symbol at
-/absolute/path/to/src/main/kotlin/sample/Use.kt offset 41 in workspace
-/absolute/path/to/workspace. Include the declaration and summarize each usage
-by file, line, column, and preview.
+/absolute/path/to/src/main/kotlin/sample/Use.kt
+offset 41
+in workspace /absolute/path/to/workspace.
+
+Include the declaration and summarize each usage by file, line,
+column, and preview.
 ```
 
 The packaged skill aligns that request to this command sequence:
@@ -104,40 +137,50 @@ KAST=$(bash .agents/skills/kast/scripts/resolve-kast.sh)
   --include-declaration=true
 ```
 
-The key result fields are `declaration`, `references`, and `page.truncated`.
+When the result comes back, the agent must focus on these fields:
 
-## Interpret the returned JSON
+- `declaration` when the request asked for it
+- `references[]` for the usage locations
+- `references[].preview` for short usage snippets
+- `page.truncated` for the cap on returned results
+
+## Read the result safely
 
 The result payload already contains enough structure for an LLM to make useful
-semantic decisions. The important part is to read the right fields and report
-their limits honestly.
+semantic decisions. The agent needs to read the right fields and report their
+limits honestly.
 
-| Field | How the agent should use it |
-| --- | --- |
-| `symbol.fqName` | Treat this as the stable symbol identity when comparing declarations and usages |
-| `symbol.kind` | Confirm that the resolved target is the kind you expected, such as `FUNCTION` or `PROPERTY` |
-| `symbol.location.filePath`, `startLine`, `startColumn` | Use these as the declaration anchor in summaries or follow-up file reads |
-| `references[].preview` | Use this as a short usage snippet, not as a replacement for reading the full file |
-| `declaration` | Use this optional field to keep declaration and usage data together in one response |
-| `page.truncated` | Report that the result set was capped; do not imply you saw every usage when this is `true` |
+- **Treat `symbol.fqName` as the identity:** Use it when comparing a resolved
+  declaration with later usage summaries.
+- **Treat `symbol.kind` as a guardrail:** If the kind is not the one you
+  expected, stop and report the mismatch instead of continuing.
+- **Treat declaration coordinates as navigation anchors:** Use
+  `symbol.location.filePath`, `startLine`, and `startColumn` for summaries and
+  follow-up file reads.
+- **Treat `references[].preview` as a snippet:** It is a quick usage hint, not
+  a replacement for reading the full file body.
+- **Treat `page.truncated` as a hard limit:** If it is `true`, say that Kast
+  capped the result set and do not imply that you saw every usage.
 
-## Use a reliable symbol-reference loop
+!!! warning
+    `page.truncated=true` does not mean the current skill workflow can page for
+    more results. It means the visible result set is capped.
 
-The strongest LLM workflow is short and repetitive. Resolve first, then expand
-to references only after the declaration identity is clear.
+## Use the loop for edit planning
 
-1. Ask the agent to run the packaged `kast` skill.
-2. Resolve the symbol at the target file path and offset.
-3. Verify the returned `fqName`, `kind`, and declaration location.
-4. Run `references` against the same file path and offset.
-5. Ask for `--include-declaration=true` when you want one combined summary.
-6. Report `page.truncated` explicitly if Kast capped the result set.
-7. Move to rename planning only after the declaration and reference spread make
+Once symbol identity and usage spread are clear, you can carry the same flow
+into rename planning or targeted diagnostics.
+
+1. Resolve the symbol at the exact target offset.
+2. Verify the returned `fqName`, `kind`, and declaration location.
+3. Run `references` against the same file path and offset.
+4. Check whether the reference spread is narrow enough for the planned change.
+5. Move to rename planning only after the declaration and caller set make
    sense.
 
 ## Avoid common mistakes
 
-Most bad symbol-reference results come from a small set of avoidable input or
+Most bad symbol-reference results come from a small set of avoidable input and
 interpretation mistakes.
 
 - Do not pass relative paths for the workspace or file.
