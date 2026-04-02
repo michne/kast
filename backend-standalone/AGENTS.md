@@ -1,29 +1,35 @@
 # Standalone backend agent guide
 
-`backend-standalone` owns the headless runtime, the standalone backend
-implementation, and the standalone-specific PSI/K2 helper code.
+`backend-standalone` owns the headless runtime, workspace discovery, and the
+standalone-specific PSI/K2 helper code.
 
 ## Ownership
 
 Use this unit for headless host concerns and nowhere else.
 
-- Keep host bootstrapping here: CLI arguments, environment fallbacks, server
-  startup, shutdown hooks, and runtime packaging.
+- Keep host bootstrapping here: standalone server options, environment
+  fallbacks, runtime startup, shutdown hooks, and the internal daemon
+  entrypoint.
+- Preserve the current runtime contract: `--key=value` arguments,
+  `KAST_WORKSPACE_ROOT` fallback, normalized absolute workspace roots, default
+  Unix domain socket transport under `<workspace>/.kast`, and `--stdio` only
+  for direct foreground serving.
+- Keep Gradle workspace discovery here. `GradleWorkspaceDiscovery` and
+  `StaticGradleWorkspaceDiscovery` must stay aligned on module names, source
+  roots, dependency edges, and large or composite-build fallbacks.
 - Keep capability advertising conservative. The standalone backend currently
   implements `RESOLVE_SYMBOL`, `FIND_REFERENCES`, `DIAGNOSTICS`, `RENAME`, and
   `APPLY_EDITS`, but not `CALL_HIERARCHY`.
-- Preserve the current CLI contract: `--key=value` arguments,
-  `KAST_WORKSPACE_ROOT` and `KAST_TOKEN` fallbacks, and normalized absolute
-  workspace roots.
+- Keep standalone-only PSI/K2 helpers and IntelliJ compatibility shims here,
+  including `src/compat/java`, instead of copying IntelliJ classes into shared
+  modules.
 - Reuse shared transport and edit semantics from `analysis-server` and
   `analysis-api` instead of re-implementing them here.
-- Keep standalone-only PSI/K2 helpers in this unit instead of rebuilding a
-  shared module unless another runtime actually returns.
 
 ## Verification
 
 Build the standalone host after changes, and add tests when the surface grows.
 
-- Run `./gradlew :backend-standalone:build`.
-- If you expand the backend surface, add or update tests that prove the new
-  advertised capabilities.
+- Run `./gradlew :backend-standalone:test` for behavior changes.
+- If you touch packaging, compatibility shims, or IntelliJ distribution
+  handling, also run `./gradlew :backend-standalone:build`.

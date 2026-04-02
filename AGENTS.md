@@ -1,7 +1,8 @@
 # Kast agent guide
 
-Kast is a Kotlin analysis server with one HTTP/JSON contract and one supported
-runtime host: a CLI-managed standalone JVM process for local automation and CI.
+Kast is a Kotlin analysis tool with one line-delimited JSON-RPC contract and
+one supported operator path: the repo-local `kast` CLI manages a standalone
+JVM daemon for local automation and CI.
 
 Subdirectory `AGENTS.md` files narrow these rules for their own units. When a
 rule exists in both places, follow the deeper file.
@@ -26,16 +27,19 @@ not justified.
 Use this map to choose the narrowest unit that owns a change.
 
 - `analysis-api`: shared contract, serializable models, errors, file edit
-  validation, and disk edit helpers
-- `kast`: repo-local CLI control plane, detached daemon management,
-  runtime readiness checks, and request dispatch
-- `analysis-server`: Ktor transport, capability gating, auth, request limits,
-  and descriptor lifecycle
+  validation, descriptor schema, and disk edit helpers
+- `kast`: repo-local CLI control plane, wrapper packaging, detached daemon
+  management, runtime readiness checks, and request dispatch
+- `analysis-server`: JSON-RPC dispatch, local socket and stdio transport,
+  request limits, and descriptor lifecycle
 - `backend-standalone`: standalone host, Analysis API session bootstrap,
-  PSI/K2-backed analysis helpers, and runtime startup
-- `shared-testing`: fake backend fixtures for tests
-- `build-logic`: Gradle convention plugins and shared build configuration
-- `docs`: Zensical source docs, ADRs, operator guidance, and implementation
+  Gradle workspace discovery, PSI/K2-backed analysis helpers, and runtime
+  startup
+- `shared-testing`: fake backend fixtures and shared contract assertions for
+  tests
+- `build-logic`: Gradle convention plugins, runtime-lib sync, wrapper
+  generation, and shared build configuration
+- `docs`: Zensical source docs, published usage guidance, and implementation
   notes
 - `site`: generated static site output for GitHub Pages
 
@@ -49,16 +53,21 @@ Apply these rules across the repo before local unit rules add more detail.
   `analysis-server` must stay free of IntelliJ-only APIs.
 - Keep standalone PSI and K2 Analysis API helpers in `backend-standalone`
   unless another surviving runtime genuinely needs them.
+- Use `kast` in commands, docs, and packaging targets. `analysis-cli` is a
+  historical path and should not receive new references.
 - Treat API model changes as contract changes. Preserve schema compatibility,
-  absolute-path invariants, and capability advertising unless the behavior is
-  intentionally changing across the stack.
-- Keep capability gating honest. A route or backend must not advertise support
-  for work it cannot actually perform.
+  absolute-path invariants, descriptor fields, and capability advertising
+  unless the behavior is intentionally changing across the stack.
+- Keep capability gating honest. A transport or backend must not advertise
+  support for work it cannot actually perform.
 - Respect the current architecture: `kast` owns the operator-facing
-  control plane, `analysis-server` owns HTTP transport, `backend-standalone`
-  owns runtime behavior, and `shared-testing` stays out of production code
-  paths.
+  control plane, `analysis-server` owns transport and descriptor plumbing,
+  `backend-standalone` owns runtime behavior, and `shared-testing` stays out
+  of production code paths.
 - Treat `docs/` plus `zensical.toml` as the documentation source of truth.
   `site/` is generated output and should be rebuilt, not hand-edited.
+- Prefer repo-root packaging entry points for shipped CLI artifacts:
+  `./gradlew :kast:syncRuntimeLibs :kast:writeWrapperScript`, `make cli`, and
+  `make cli-zip`.
 - Verify with the narrowest Gradle task that proves the change. Broaden the
   scope when you touch shared contracts, build logic, or cross-module behavior.

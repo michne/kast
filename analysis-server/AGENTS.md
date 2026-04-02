@@ -1,26 +1,31 @@
 # Analysis server agent guide
 
-`analysis-server` owns the HTTP/JSON transport around `AnalysisBackend`.
+`analysis-server` owns the local transport and request-dispatch layer around
+`AnalysisBackend`.
 
 ## Ownership
 
-Keep this unit focused on the network boundary around the backend interface.
+Keep this unit focused on transport concerns around the backend interface.
 
-- Keep this module focused on transport concerns: Ktor routing, auth, request
-  validation, timeouts, truncation, and descriptor file lifecycle.
-- Do not move PSI logic, IntelliJ threading, or standalone CLI parsing into
-  this unit. Those belong to the backend hosts.
-- Preserve route semantics under `/api/v1`, including `X-Kast-Token` auth,
-  capability checks before backend calls, and consistent error mapping.
-- Keep descriptor behavior stable. Starting a server writes a descriptor based
-  on backend identity and workspace root; closing the server removes it.
-- Keep result limiting and pagination metadata aligned with backend responses.
-  If truncation changes, update tests and docs together.
+- Keep the line-delimited JSON-RPC contract here. `AnalysisDispatcher`,
+  `JsonRpcProtocol`, and the socket and stdio servers must agree on method
+  names, error mapping, timeout behavior, and absolute-path validation.
+- Preserve descriptor behavior for Unix domain socket runtimes. Starting a UDS
+  server writes `ServerInstanceDescriptor` records under the configured
+  descriptor directory; shutdown removes them.
+- Keep capability checks, truncation, and request-limit handling aligned with
+  backend responses.
+- Do not move PSI logic, workspace discovery, or CLI parsing into this unit.
+  Those belong in `backend-standalone` or `kast`.
+- `AnalysisApplication.kt` is the remaining Ktor compatibility surface. If you
+  touch it, keep its auth, validation, and error semantics aligned with the
+  JSON-RPC dispatcher instead of letting the transports drift.
 
 ## Verification
 
 Prove transport changes with server tests first, then broaden if needed.
 
 - Run `./gradlew :analysis-server:test`.
-- If you change transport behavior or descriptor handling, exercise the
-  affected host module as well.
+- If you change descriptor or socket lifecycle, make sure the socket transport
+  tests still pass, starting with
+  `./gradlew :analysis-server:test --tests io.github.amichne.kast.server.AnalysisServerSocketTest`.

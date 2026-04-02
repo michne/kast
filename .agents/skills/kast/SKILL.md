@@ -1,128 +1,88 @@
 ---
 name: kast
-description: Resolve and invoke Kast tooling deterministically for the current workspace. Use when Codex needs to inspect which standalone Kast transports are available in this repository, prefer the repo-local CLI control plane, or execute Kast operations with machine-readable JSON and explicit failure modes instead of ad hoc descriptor parsing or guessed entrypoints.
+description: Use the portable `kast` CLI from `PATH`. On match, first verify that `kast` is available and runnable, then run workspace and analysis commands through that executable for the target workspace. Use when Codex needs to start or inspect a Kast daemon, query capabilities, resolve symbols, find references, run diagnostics, plan renames, or apply edit plans. If `kast` is missing, fail clearly instead of probing repo-local wrapper paths, descriptor files, or direct transports.
 ---
 
 # Kast
 
-Resolve the repository-local Kast entrypoints first, then run one of the transport wrappers instead of rebuilding descriptor logic in-line.
+Use `kast` from `PATH` and nothing else.
 
-Prefer [`kast.py`](./scripts/kast.py) for normal work. Use the transport-specific wrappers only when the user explicitly requires CLI-only behavior or a direct standalone HTTP call.
+Treat PATH availability as part of the contract for this skill.
 
-## Workflow
+## Startup check
 
-1. Resolve the current repo state.
+Run these checks immediately after matching the skill:
 
-   Run:
+```bash
+command -v kast
+kast help
+```
 
-   ```bash
-   python3 ./scripts/kast-resolve.py resolve-tooling --workspace-root="$(git rev-parse --show-toplevel 2>/dev/null)"
-   ```
+If either command fails, stop and report that `kast` is not available on
+`PATH`.
 
-   Read the JSON instead of inferring from file presence. The resolver reports:
+Do not search for `./kast/build/scripts/kast`.
 
-   - the normalized repo root and workspace root
-   - the descriptor directory in effect
-   - whether the repo-local `analysis-cli` wrapper is present
-   - whether the repo-local standalone wrapper is present
-  - live standalone runtime candidates, including readiness
-   - the deterministic transport that `auto` would choose for the requested operation
+Do not build a wrapper inside the repo as a fallback.
 
-2. Choose the transport with the narrowest acceptable freedom.
+## Golden path
 
-   Use `auto` when the task is "run Kast correctly for this workspace".
-  Use `cli` when the task needs control-plane commands such as daemon start, daemon stop, workspace ensure, or the normal supported path.
-  Use `http-standalone` only when the user explicitly wants the direct standalone HTTP path and the runtime is already running.
+Run the CLI directly:
 
-3. Execute through a wrapper script.
+```bash
+kast \
+  workspace ensure \
+  --workspace-root=/absolute/path/to/workspace
+```
 
-   All wrappers emit JSON and fail with JSON. They do not print explanatory prose.
+That command starts or reuses the standalone daemon for the workspace. Reuse
+the same wrapper for every later command.
 
-   ```bash
-   scripts/kast.py \
-     --workspace-root=$(git rev-parse --show-toplevel 2>/dev/null) \
-     --operation=workspace-status
-   ```
+## Command rules
 
-   ```bash
-   scripts/kast.py \
-     --workspace-root=$(git rev-parse --show-toplevel 2>/dev/null) \
-     --operation=diagnostics \
-     --request-file=/absolute/path/to/query.json
-   ```
+Use `--key=value` syntax for every option. Pass an absolute
+`--workspace-root=...` for the workspace you want to analyze.
 
-## Transport Rules
+Prefer inline CLI arguments for the common query commands:
 
-Apply these rules exactly.
+- `symbol resolve --file-path=... --offset=...`
+- `references --file-path=... --offset=... [--include-declaration=true]`
+- `diagnostics --file-paths=/absolute/A.kt,/absolute/B.kt`
+- `rename --file-path=... --offset=... --new-name=RenamedSymbol [--dry-run=true]`
 
-- Treat `auto` as deterministic, not heuristic.
-- Let explicit transport selection override everything else.
-- Let `auto` prefer `cli` when the repo-local `analysis-cli` wrapper exists.
-- Let `auto` resolve repo-local executables in this order: fat JAR first, wrapper script second.
-- Let `auto` fall back to `http-standalone` only when `cli` is unavailable.
-- Fail when the requested backend has zero ready candidates.
-- Fail when the requested backend has more than one ready candidate.
-- Never guess between two descriptors for the same backend.
-- Require absolute `--request-file` paths for request-body operations.
-- Prefer request files over inline JSON assembly in shell commands.
+Use `--request-file=/absolute/path/to/query.json` only when the payload is
+already on disk or the command requires it. `edits apply` always requires
+`--request-file`.
 
-## Operations
+## Supported commands
 
-Use these operation names.
+Use only these public commands:
 
-- `workspace-status`
-- `workspace-ensure`
-- `daemon-start`
-- `daemon-stop`
-- `health`
-- `runtime-status`
+- `workspace status`
+- `workspace ensure`
+- `daemon start`
+- `daemon stop`
 - `capabilities`
-- `symbol-resolve`
+- `symbol resolve`
 - `references`
 - `diagnostics`
 - `rename`
-- `edits-apply`
+- `edits apply`
 
-Use `workspace-status`, `workspace-ensure`, `daemon-start`, and `daemon-stop` through `cli` or `auto`.
+Successful results stay on stdout as JSON. Daemon lifecycle notes, when
+present, go to stderr.
 
-Use `health`, `runtime-status`, `capabilities`, `symbol-resolve`, `references`, `diagnostics`, `rename`, and `edits-apply` through any transport, subject to runtime availability.
+## Avoid
 
-## Scripts
+Do not use repo-local wrapper paths such as `./kast/build/scripts/kast`.
 
-- [`kast-resolve.py`](./scripts/kast-resolve.py): Inspect repo-local tooling and live runtime candidates.
-- [`kast.py`](./scripts/kast.py): Select a transport deterministically and execute one operation.
-- [`kast-cli.py`](./scripts/kast-cli.py): Force the repo-local `analysis-cli` transport.
-- [`kast-http-standalone.py`](./scripts/kast-http-standalone.py): Force the direct HTTP standalone runtime path.
+Do not use the old transport helper scripts.
 
-## Request Files
+Do not inspect `.kast/instances` or descriptor JSON to decide what to run.
 
-Use absolute-path JSON request files for these operations.
+Do not call direct HTTP transports.
 
-- `symbol-resolve`
-- `references`
-- `diagnostics`
-- `rename`
-- `edits-apply`
+Do not invent hyphenated pseudo-operations such as `workspace-status`,
+`symbol-resolve`, or `edits-apply`.
 
-Example `diagnostics` request:
-
-```json
-{
-  "filePaths": [
-    "/absolute/path/to/src/main/kotlin/example/Foo.kt"
-  ]
-}
-```
-
-Example `rename` request:
-
-```json
-{
-  "position": {
-    "filePath": "/absolute/path/to/src/main/kotlin/example/Foo.kt",
-    "offset": 123
-  },
-  "newName": "renamedSymbol",
-  "dryRun": true
-}
-```
+Do not use `callHierarchy`; it is still a known gap.
