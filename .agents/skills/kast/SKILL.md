@@ -20,20 +20,30 @@ Kotlin/JVM workspaces.
 
 ## 1. CLI Discovery
 
-Never hardcode the kast binary path. Always resolve it first:
+Never hardcode the kast binary path. Try in this order:
+
+### Preferred: kast on PATH
+
+```bash
+kast version
+```
+
+If this succeeds, use `kast` directly for all commands. This is the most reliable path
+and works across all environments including sandboxed ones.
+
+### Fallback: resolve-kast.sh
+
+If `kast` is not on PATH, use the helper script:
 
 ```bash
 KAST=$(bash .agents/skills/kast/scripts/resolve-kast.sh)
 ```
 
-The script tries in order:
-1. `kast` on PATH
-2. `kast/build/scripts/kast` (Gradle build output)
-3. `dist/kast/kast` (make cli output)
-4. Auto-build via `./gradlew :kast:writeWrapperScript` if Java 21+ and gradlew present
+The script tries: PATH → Gradle build output → dist output → auto-build via gradlew.
 
-On success: prints the absolute path to stdout, exit 0.
-On failure: prints diagnostic to stderr, exit 1. See `references/troubleshooting.md#kast-not-found`.
+**Note:** This script requires the `.agents/skills/kast/` directory to be present relative
+to the workspace root. If it is absent or the path traversal fails, fall back to installing
+kast directly (`./install.sh` or `brew install kast`).
 
 **Once resolved, use `$KAST` for every subsequent command:**
 ```bash
@@ -59,6 +69,7 @@ It blocks until the daemon is `READY` (default: 60s timeout).
 ```
 STARTING → INDEXING → READY
                     → DEGRADED (restart via workspace ensure)
+         → FAILED   (daemon exited before READY — check the log)
 ```
 
 | State | Meaning | Action |
@@ -67,6 +78,61 @@ STARTING → INDEXING → READY
 | `INDEXING` | Building index | Wait; queries may be empty |
 | `READY` | Fully operational | Proceed with analysis |
 | `DEGRADED` | Unhealthy | Run `workspace ensure` to restart |
+| `FAILED` | Daemon exited before READY | See startup failure diagnosis below |
+
+### When `workspace ensure` times out
+
+A timeout from `workspace ensure` is a symptom, not the root cause. The daemon may have
+exited before it could register itself as ready. **Do not retry blindly.**
+
+**Step 1 — Check the daemon log immediately:**
+
+```bash
+cat .kast/logs/standalone-daemon.log | tail -50
+```
+
+This is where the real error lives. Look for:
+
+- `SocketException: Operation not permitted` → Unix domain socket bind blocked (see below)
+- `Address already in use` → Port/socket conflict; run `workspace ensure` after `daemon stop`
+- `OutOfMemoryError` → JVM heap too small; set `KAST_DAEMON_OPTS=-Xmx2g` or equivalent
+- Java version errors → Requires Java 21+
+- Classpath/JAR errors → Binary may be corrupt; reinstall
+
+**Step 2 — Check workspace status:**
+
+```bash
+"$KAST" workspace status --workspace-root=/absolute/path
+```
+
+If this returns `selected: null` and `candidates: []`, the daemon failed to start and
+register before exiting. This does **not** mean "no daemon is configured" — it means the
+startup attempt failed silently. The log is the authoritative source.
+
+### Unix domain socket bind failure
+
+**Symptom:** `workspace ensure` times out; log contains `SocketException: Operation not permitted`
+during socket bind; no descriptor written to `.kast/instances/`.
+
+**Cause:** The environment (sandbox, container, macOS app sandbox) is blocking Unix domain
+socket creation. This is a transport/environment constraint, not an indexing problem.
+
+**Recovery options (in order):**
+
+1. **Use TCP transport** — if supported by your kast version:
+   ```bash
+   "$KAST" workspace ensure --workspace-root=/absolute/path --transport=tcp
+   ```
+   All subsequent commands must also pass `--transport=tcp`.
+
+2. **Run outside the sandbox** — restart the terminal/process outside any app sandbox
+   restrictions and retry.
+
+3. **Check if UDS is blocked by policy:**
+   ```bash
+   python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.bind('/tmp/kast-test.sock'); print('UDS OK')"
+   ```
+   If this fails with `Operation not permitted`, the environment is blocking UDS at the OS level.
 
 ### Check status without ensuring
 
@@ -75,6 +141,8 @@ STARTING → INDEXING → READY
 ```
 
 Returns an array of `RuntimeStatusResponse`. Check `state`, `healthy`, `active`.
+An empty response (`selected: null`, `candidates: []`) indicates the daemon never
+successfully started and registered — check the log for the startup error.
 
 ### Stop the daemon
 
@@ -107,11 +175,53 @@ If a needed capability is absent, see `references/troubleshooting.md#capability_
 
 ---
 
-## 4. Resolving Named Symbols (Conversational Lookups)
+## 4. Index Validation
 
-Most kast commands need `--offset`, but users will refer to symbols by name ("find references
-to `MyRepository`", "resolve `UserService`", "rename `handleClick`"). Bridge the gap with
-this two-step approach: **find the file + position first, then call kast**.
+"The daemon is running" and "the index is serving semantic results" are different things.
+Do not assume indexing is healthy just because `workspace ensure` succeeded or state is `READY`.
+
+**Index is validated only when all four criteria pass:**
+
+1. `workspace ensure` completes with state `READY`
+2. `capabilities` returns the expected capabilities (at minimum `RESOLVE_SYMBOL` and `FIND_REFERENCES`)
+3. `symbol resolve` succeeds on a known declaration in the workspace
+4. `references` returns actual cross-file results for that symbol
+
+**Quick smoke test** — run these in sequence after `workspace ensure`:
+
+```bash
+# 1. Check capabilities
+"$KAST" capabilities --workspace-root=/absolute/path
+
+# 2. Find a declaration in the workspace (pick any class or top-level function)
+python .agents/skills/kast/scripts/find-symbol-offset.py \
+  /absolute/path/to/SomeFile.kt --symbol SomeClass
+
+# 3. Resolve it
+"$KAST" symbol resolve \
+  --workspace-root=/absolute/path \
+  --file-path=/absolute/path/to/SomeFile.kt \
+  --offset=<offset>
+
+# 4. Find references
+"$KAST" references \
+  --workspace-root=/absolute/path \
+  --file-path=/absolute/path/to/SomeFile.kt \
+  --offset=<offset>
+```
+
+If step 3 or 4 returns `NOT_FOUND` and state is `READY`, the workspace may still be
+finishing its initial index pass. Wait 10–30 seconds and retry.
+
+---
+
+## 5. Resolving Named Symbols (Conversational Lookups)
+
+Most kast commands need `--offset`, but users will usually describe the target
+in conversational terms: a class, a function, or a field-like property ("find
+references to `MyRepository`", "resolve the `baseUrl` property on
+`HttpClientConfig`", "rename `handleClick`"). Bridge that human reference to a
+concrete file + position before you call kast.
 
 ### Step 1 — Locate the symbol in the codebase
 
@@ -124,7 +234,7 @@ grep -rn "class MyClass\b" --include="*.kt" /workspace
 # fun
 grep -rn "fun myFunction\b" --include="*.kt" /workspace
 
-# val / var (property or top-level)
+# val / var (property or field-like member)
 grep -rn "\bval myProp\b\|\bvar myProp\b" --include="*.kt" /workspace
 
 # fallback: any occurrence
@@ -188,9 +298,24 @@ User: "find references to HealthCheckService"
 4. Run:    kast references --file-path=.../HealthCheckService.kt --offset=347
 ```
 
+### Quick pattern — property lookup
+
+```
+User: "resolve the retryDelay property on RetryConfig"
+
+1. Grep:   grep -rn "\bval retryDelay\b\|\bvar retryDelay\b" --include="*.kt" /workspace
+           → src/main/kotlin/com/example/RetryConfig.kt:18:    val retryDelay: Duration
+
+2. Offset: python find-symbol-offset.py .../RetryConfig.kt --symbol retryDelay
+           → 512  18  8  val retryDelay: Duration
+
+3. Verify: kast symbol resolve --offset=512
+           → kind: PROPERTY, containingDeclaration: com.example.RetryConfig ✓
+```
+
 ---
 
-## 5. Analysis Commands
+## 6. Analysis Commands
 
 All commands:
 - Output machine-readable JSON on stdout
@@ -291,7 +416,7 @@ Use the `edits` and `fileHashes` from a `rename` result directly as the request 
 
 ---
 
-## 6. Workflows
+## 7. Workflows
 
 ### Pre-Edit Intelligence
 
@@ -299,7 +424,7 @@ Before modifying a symbol, gather context:
 
 ```
 1. workspace ensure
-2. find offset (Section 4 — grep + find-symbol-offset.py if starting from a name)
+2. find offset (Section 5 — grep + find-symbol-offset.py if starting from a name)
 3. symbol resolve  → confirm symbol identity and kind
 4. references      → assess how many call sites exist
 5. capabilities    → confirm RENAME/APPLY_EDITS available if planning rename
@@ -345,30 +470,50 @@ When a build fails or you need to understand errors in a file:
 4. diagnostics again → confirm clean
 ```
 
+### First-Run Validation
+
+When setting up kast in a new environment, validate the full stack before doing real work:
+
+```
+1. workspace ensure                              → must reach READY
+2. capabilities                                 → must include RESOLVE_SYMBOL, FIND_REFERENCES
+3. grep for any class declaration in the workspace
+4. find-symbol-offset.py → get offset
+5. symbol resolve at that offset                → must return a valid fqName
+6. references at that offset                    → must return results (not empty)
+```
+
+Only once all six steps pass is the index confirmed healthy. If step 5 or 6 returns
+`NOT_FOUND` with state `READY`, the index may still be warming up — wait and retry.
+
 ---
 
-## 7. Error Recovery
+## 8. Error Recovery
 
-| Error code | HTTP | Recovery |
-|-----------|------|----------|
-| `VALIDATION_ERROR` | 400 | Fix request parameters (file path, offset, new name) |
-| `UNAUTHORIZED` | 401 | Check auth token configuration |
-| `NOT_FOUND` | 404 | Offset may be on whitespace/comment. Adjust to identifier start. Wait for READY state if still indexing. |
-| `CONFLICT` | 409 | Files changed since plan. Re-run `rename` for a fresh plan. |
-| `CAPABILITY_NOT_SUPPORTED` | 501 | Run `capabilities` to see what is available. Fall back to grep for search. |
-| `APPLY_PARTIAL_FAILURE` | 500 | Inspect `details` map. Already-applied files are committed. Fix root cause; apply remaining manually. |
+| Error / Symptom | Likely Cause | Recovery |
+|----------------|-------------|----------|
+| `VALIDATION_ERROR` (400) | Bad request parameters | Fix file path, offset, or new name |
+| `UNAUTHORIZED` (401) | Auth token missing | Check auth token configuration |
+| `NOT_FOUND` (404) | Offset on whitespace/comment, or still indexing | Adjust offset to identifier start. Verify state is READY. |
+| `CONFLICT` (409) | Files changed since rename plan | Re-run `rename` for a fresh plan |
+| `CAPABILITY_NOT_SUPPORTED` (501) | Capability absent or daemon too old | Run `capabilities`. Fall back to grep for search. |
+| `APPLY_PARTIAL_FAILURE` (500) | Permissions or disk error mid-apply | Inspect `details` map. Fix root cause; apply remaining manually. |
+| `RUNTIME_TIMEOUT` from `workspace ensure` | Daemon failed to start | Check `.kast/logs/standalone-daemon.log` for root cause |
+| `selected: null` from `workspace status` | Daemon crashed before registering | Check `.kast/logs/standalone-daemon.log`; daemon never reached READY |
+| `SocketException: Operation not permitted` in log | UDS bind blocked by sandbox/container | Use `--transport=tcp`, or run outside sandbox |
 
 For detailed decision trees: `references/troubleshooting.md`
 
 ---
 
-## 8. Command Syntax
+## 9. Command Syntax
 
 **Do:**
 - Use `--key=value` for every option: `--workspace-root=/path`, `--offset=123`
 - Use absolute paths for all file arguments
 - Separate multiple commands by running them sequentially
 - Use `--request-file` for `edits apply` (always) and for complex queries
+- Check `.kast/logs/standalone-daemon.log` when `workspace ensure` fails or times out
 
 **Do not:**
 - Do not use `callHierarchy` — not yet implemented
@@ -377,10 +522,11 @@ For detailed decision trees: `references/troubleshooting.md`
 - Do not pass relative paths to `--workspace-root`, `--file-path`, or `--file-paths`
 - Do not inspect `.kast/instances/` descriptor JSON directly
 - Do not call HTTP transport endpoints directly
+- Do not treat `RUNTIME_TIMEOUT` as the root cause — read the log first
 
 ---
 
-## 9. Integration
+## 10. Integration
 
 | Task | Use |
 |------|-----|
@@ -392,13 +538,14 @@ For detailed decision trees: `references/troubleshooting.md`
 | Build the project | `kotlin-gradle-loop` / `./gradlew build` |
 | Run tests | `kotlin-gradle-loop` / `./gradlew test` |
 | Check if code compiles | `kotlin-gradle-loop` or kast `diagnostics` (faster) |
+| Diagnose daemon startup failure | Read `.kast/logs/standalone-daemon.log` |
 
 kast = **semantic intelligence** (what is this symbol, where is it used, rename it).
 kotlin-gradle-loop = **build and test iteration** (does it compile, do tests pass).
 
 ---
 
-## 10. Reference Documents
+## 11. Reference Documents
 
 | Document | When to read |
 |----------|-------------|

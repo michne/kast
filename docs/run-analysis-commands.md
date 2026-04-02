@@ -7,7 +7,10 @@ icon: lucide/search
 
 Once `kast workspace ensure` has selected a ready daemon, you can run the
 supported analysis commands through the same CLI. This page focuses on the
-common tasks people reach for during normal workspace analysis.
+common tasks people reach for during normal workspace analysis. If you are
+starting from a human description of a class or property instead of a known
+file position, move to the [human-first agent
+guide](use-kast-from-an-llm-agent.md) first.
 
 ## Choose inline options or a request file
 
@@ -130,4 +133,5 @@ of the public commands.
 
 - [Command reference](command-reference.md)
 - [Use Kast from an LLM agent](use-kast-from-an-llm-agent.md)
+- [LLM scaffolding reference](llm-scaffolding-reference.md)
 - [Get started](get-started.md)

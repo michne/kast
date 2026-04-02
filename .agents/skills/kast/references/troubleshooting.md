@@ -8,6 +8,11 @@ Decision trees for every known failure mode.
 
 **Symptom:** `workspace ensure` or `daemon start` exits non-zero; daemon never reaches `READY`.
 
+**First step — always read the log:**
+```bash
+cat .kast/logs/standalone-daemon.log | tail -50
+```
+
 ```
 Is Java 21+ available?
 ├─ No  → Install Java 21. Check: java -version. Set JAVA_HOME if needed.
@@ -15,14 +20,53 @@ Is Java 21+ available?
    Is the kast binary executable?
    ├─ No  → chmod +x on the binary. Re-run resolve-kast.sh.
    └─ Yes
-      Is there a stale descriptor (.kast/instances/)?
-      ├─ Yes → Run: kast daemon stop --workspace-root=...
-      │         If stop fails, remove the descriptor file manually, then retry.
+      Does the log contain "SocketException: Operation not permitted"?
+      ├─ Yes → Unix domain socket bind is blocked. See "Unix Domain Socket Bind Failure" below.
       └─ No
-         Check stderr output for port/socket conflicts.
-         The daemon uses a Unix domain socket; ensure /tmp is writable.
-         Try: kast workspace status --workspace-root=... for partial state.
+         Is there a stale descriptor (.kast/instances/)?
+         ├─ Yes → Run: kast daemon stop --workspace-root=...
+         │         If stop fails, remove the descriptor file manually, then retry.
+         └─ No
+            Check stderr output for port/socket conflicts.
+            The daemon uses a Unix domain socket; ensure /tmp is writable.
+            Try: kast workspace status --workspace-root=... for partial state.
 ```
+
+---
+
+## Unix Domain Socket Bind Failure
+
+**Symptom:** `workspace ensure` times out with `RUNTIME_TIMEOUT`; daemon log contains
+`java.net.SocketException: Operation not permitted` during socket bind; `workspace status`
+returns `selected: null` and `candidates: []`.
+
+**Cause:** The operating environment (macOS app sandbox, container seccomp profile,
+CI runner policy) is blocking Unix domain socket creation. This is a transport constraint,
+not an indexing or configuration problem. The daemon JVM starts successfully but cannot
+bind its communication socket, so it exits before reaching `READY`.
+
+```
+Verify UDS is blocked:
+  python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.bind('/tmp/kast-test.sock'); print('UDS OK')"
+  → If this raises "Operation not permitted", UDS is blocked at the OS level.
+
+Recovery option 1 — TCP transport (if supported):
+  kast workspace ensure --workspace-root=... --transport=tcp
+  → All subsequent commands must also pass --transport=tcp
+
+Recovery option 2 — Run outside the sandbox:
+  → Restart your terminal or process host outside any app sandbox restrictions.
+  → On macOS, this typically means running directly in Terminal.app or iTerm2
+    rather than in a sandboxed IDE or tool process.
+
+Recovery option 3 — Container/CI:
+  → Add AF_UNIX to the seccomp allowlist, or use --transport=tcp.
+  → See references/cloud-setup.md for CI-specific guidance.
+```
+
+**Important:** Once the transport constraint is resolved, kast reaches `READY` and the
+index is typically available immediately. The underlying indexing is not affected by this
+failure — only the daemon's ability to communicate.
 
 ---
 
@@ -30,7 +74,19 @@ Is Java 21+ available?
 
 **Symptom:** `workspace ensure` returns but `state` is `STARTING` or `INDEXING`, or the command times out.
 
+A timeout is a symptom, not the root cause. When `workspace ensure` times out, always
+inspect the daemon log before retrying:
+
+```bash
+cat .kast/logs/standalone-daemon.log | tail -50
 ```
+
+```
+workspace ensure timed out
+  → Read .kast/logs/standalone-daemon.log immediately
+  → Look for: SocketException, OutOfMemoryError, ClassNotFoundException, port conflicts
+  → If the log shows the daemon exited, that is the real cause — fix it, then retry
+
 state = STARTING
   → Workspace is still bootstrapping the Kotlin compiler. Wait and retry.
   → Increase timeout: --wait-timeout-ms=120000
@@ -44,6 +100,11 @@ state = DEGRADED
   → Daemon is unhealthy. workspace ensure will attempt to restart it.
   → If restart fails: daemon stop, then workspace ensure again.
   → Check disk space and memory (JVM heap may need tuning).
+
+workspace status returns selected: null, candidates: []
+  → The daemon started but exited before registering a ready descriptor.
+  → This does NOT mean "no daemon configured" — it means startup failed silently.
+  → Read .kast/logs/standalone-daemon.log for the exit reason.
 ```
 
 ---
@@ -186,19 +247,26 @@ startOffset from the response to confirm your calculation matches.
 
 ## kast Not Found
 
-**Symptom:** `resolve-kast.sh` exits 1; no binary found.
+**Symptom:** `kast` not on PATH and `resolve-kast.sh` exits 1; no binary found.
 
 ```
-Run: bash .agents/skills/kast/scripts/resolve-kast.sh
+Try kast on PATH first:
+  command -v kast
+  → If found, use it directly. No script needed.
 
-If it reports "Java not found" or version < 21:
+If kast is not on PATH, check install options:
+  → ./install.sh                    # downloads a GitHub release for your platform
+  → brew install kast               # if Homebrew is available
+  → make cli                        # builds dist/kast/kast locally
+
+If using resolve-kast.sh and it reports "Java not found" or version < 21:
   → Install Java 21+. See references/cloud-setup.md.
 
-If it reports Gradle build failed:
+If resolve-kast.sh reports Gradle build failed:
   → Run: ./gradlew :kast:writeWrapperScript
   → Check Gradle output for compilation errors.
 
-If you want a pre-built binary:
-  → Run: ./install.sh
-  → This downloads a GitHub release for your platform.
+Note: resolve-kast.sh requires .agents/skills/kast/ to exist relative to the
+workspace root. If this path is absent (e.g., a workspace that doesn't include
+the skill directory), install kast directly via ./install.sh instead.
 ```

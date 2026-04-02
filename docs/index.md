@@ -53,12 +53,21 @@ first.
 
     ---
 
-    Run semantic symbol and reference lookups through the packaged `kast`
-    skill and its CLI discovery workflow.
+    Start with conversational requests like "find references to
+    `HealthCheckService`" and let the packaged `kast` skill bridge the lookup.
 
     [Open the guide](use-kast-from-an-llm-agent.md)
 
 </div>
+
+## Advanced prompting
+
+Most readers do not need to think about offsets, request payloads, or raw
+command reproduction. If you are authoring automation or debugging how the
+skill maps a human reference into the CLI, use the advanced scaffolding page
+after the human-first guide.
+
+- [LLM scaffolding reference](llm-scaffolding-reference.md)
 
 ## What every Kast command has in common
 
@@ -97,4 +106,5 @@ running workspace daemon, jump straight to the task and reference pages.
 - [Get started](get-started.md)
 - [Run analysis commands](run-analysis-commands.md)
 - [Use Kast from an LLM agent](use-kast-from-an-llm-agent.md)
+- [LLM scaffolding reference](llm-scaffolding-reference.md)
 - [Command reference](command-reference.md)
