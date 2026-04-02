@@ -85,9 +85,18 @@ val portableDistZip by tasks.registering(Zip::class) {
     archiveBaseName.set(project.name)
     archiveClassifier.set("portable")
     destinationDirectory.set(layout.buildDirectory.dir("distributions"))
+    dirPermissions { unix("755") }
+    filePermissions { unix("644") }
 
     from(syncPortableDist) {
         into(project.name)
+    }
+
+    eachFile {
+        val archivePath = relativePath.pathString
+        if (archivePath == "${project.name}/${project.name}" || archivePath.startsWith("${project.name}/bin/")) {
+            permissions { unix("755") }
+        }
     }
 }
 

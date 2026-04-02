@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
@@ -15,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 #define SCHEMA_VERSION 1
@@ -82,6 +85,23 @@ static char *xstrdup(const char *value) {
     char *copy = xmalloc(len + 1);
     memcpy(copy, value, len + 1);
     return copy;
+}
+
+static char *xstrprintf(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    va_list copy;
+    va_copy(copy, args);
+    int needed = vsnprintf(NULL, 0, format, copy);
+    va_end(copy);
+    if (needed < 0) {
+        va_end(args);
+        die("Failed to format string");
+    }
+    char *buffer = xmalloc((size_t)needed + 1);
+    vsnprintf(buffer, (size_t)needed + 1, format, args);
+    va_end(args);
+    return buffer;
 }
 
 static void sb_init(StringBuilder *builder) {
@@ -201,6 +221,24 @@ static char *path_join(const char *left, const char *right) {
     return sb_take(&builder);
 }
 
+static char *current_working_directory(void) {
+    size_t size = 256;
+    while (true) {
+        char *buffer = xmalloc(size);
+        if (getcwd(buffer, size) != NULL) {
+            return buffer;
+        }
+        free(buffer);
+        if (errno != ERANGE) {
+            die("Failed to get current working directory");
+        }
+        if (size > SIZE_MAX / 2) {
+            die("Current working directory path is too long");
+        }
+        size *= 2;
+    }
+}
+
 static char *normalize_absolute_path(const char *absolute) {
     size_t len = strlen(absolute);
     char *normalized = xmalloc(len + 2);
@@ -249,14 +287,27 @@ static char *absolute_path(const char *path) {
     if (path[0] == '/') {
         return normalize_absolute_path(path);
     }
-    char cwd[PATH_MAX];
-    if (getcwd(cwd, sizeof(cwd)) == NULL) {
-        die("Failed to get current working directory");
-    }
+    char *cwd = current_working_directory();
     char *joined = path_join(cwd, path);
+    free(cwd);
     char *normalized = normalize_absolute_path(joined);
     free(joined);
     return normalized;
+}
+
+static void sleep_ms(long millis) {
+    if (millis <= 0) {
+        return;
+    }
+    struct timespec remaining = {
+        .tv_sec = millis / 1000,
+        .tv_nsec = (millis % 1000) * 1000000L,
+    };
+    while (nanosleep(&remaining, &remaining) != 0) {
+        if (errno != EINTR) {
+            die("Failed to sleep");
+        }
+    }
 }
 
 static bool is_regular_file(const char *path) {
@@ -934,7 +985,7 @@ static void kill_candidate(Candidate *candidate) {
             if (!pid_alive(candidate->pid)) {
                 break;
             }
-            usleep(250000);
+            sleep_ms(250);
         }
         if (pid_alive(candidate->pid)) {
             kill((pid_t)candidate->pid, SIGKILL);
@@ -1272,18 +1323,15 @@ static pid_t start_daemon_process(
         dup2(dev_null, STDIN_FILENO);
         close(dev_null);
     }
-    chdir(workspace_root);
+    if (chdir(workspace_root) != 0) {
+        _exit(1);
+    }
 
-    char workspace_arg[PATH_MAX + 64];
-    char socket_arg[PATH_MAX + 64];
-    char timeout_arg[64];
-    char results_arg[64];
-    char concurrent_arg[64];
-    snprintf(workspace_arg, sizeof(workspace_arg), "--workspace-root=%s", workspace_root);
-    snprintf(socket_arg, sizeof(socket_arg), "--socket-path=%s", socket_path);
-    snprintf(timeout_arg, sizeof(timeout_arg), "--request-timeout-ms=%ld", request_timeout_ms);
-    snprintf(results_arg, sizeof(results_arg), "--max-results=%d", max_results);
-    snprintf(concurrent_arg, sizeof(concurrent_arg), "--max-concurrent-requests=%d", max_concurrent);
+    char *workspace_arg = xstrprintf("--workspace-root=%s", workspace_root);
+    char *socket_arg = xstrprintf("--socket-path=%s", socket_path);
+    char *timeout_arg = xstrprintf("--request-timeout-ms=%ld", request_timeout_ms);
+    char *results_arg = xstrprintf("--max-results=%d", max_results);
+    char *concurrent_arg = xstrprintf("--max-concurrent-requests=%d", max_concurrent);
 
     char *const exec_argv[] = {
         java,
@@ -1324,7 +1372,7 @@ static Candidate *wait_for_ready_candidate(const char *workspace_root, long time
             return result;
         }
         free_candidate_list(&list);
-        usleep(250000);
+        sleep_ms(250);
         elapsed += 250;
     }
     return NULL;
