@@ -200,6 +200,64 @@ Is the daemon still indexing?
          If degraded, restart and retry.
 ```
 
+**Tip — use `kast-plan-utils.py check-diagnostics` in scripts** to reliably detect errors
+without `jq` or shell quoting:
+
+```bash
+"$KAST" diagnostics \
+  --workspace-root=/absolute/path \
+  --file-paths="$FILES_CSV" > /tmp/diag.json
+
+python3 "$SKILL_ROOT/scripts/kast-plan-utils.py" check-diagnostics /tmp/diag.json
+# exits 0 if clean; exits 1 and prints details to stderr if any ERROR diagnostics found
+```
+
+---
+
+## Scripted Workflows: Shell Quoting Failures
+
+**Symptom:** A rename or diagnostics pipeline silently produces wrong output, fails with
+`jq: compile error`, or a shell variable is reported as unbound inside `resolve-kast.sh`.
+
+**Root cause checklist:**
+
+```
+Is resolve-kast.sh failing with "unbound variable"?
+├─ Yes → Verify GRADLE_SCRIPT / DIST_SCRIPT are initialised before use.
+│        The fixed version pre-assigns both to "" at the top of the script.
+│        Re-install or update the skill if running an older version.
+└─ No
+   Is jq being used to build JSON or extract arrays with nested quoting?
+   ├─ Yes → Replace with kast-plan-utils.py subcommands:
+   │         extract-apply-request  — builds the apply-request file
+   │         affected-files-csv     — produces the --file-paths CSV
+   │         check-diagnostics      — checks diagnostic results
+   └─ No
+      Is the workflow run with bash -lc '...' or sh instead of plain bash?
+      ├─ Yes → Use a bash heredoc or a separate .sh script instead.
+      │         Single-quoted multi-command strings passed to bash -lc
+      │         are fragile with nested jq expressions.
+      └─ No
+         Is kast-rename.sh the right fit?
+         → Use kast-rename.sh for end-to-end rename automation:
+           it handles all JSON steps internally, uses mktemp + trap,
+           and needs no jq or inline JSON construction.
+```
+
+**Recommended pattern — diagnostics after rename:**
+
+```bash
+# Save affected paths to a variable without jq
+FILES_CSV="$(python3 "$SKILL_ROOT/scripts/kast-plan-utils.py" affected-files-csv /tmp/rename-plan.json)"
+
+# Run diagnostics; check results
+"$KAST" diagnostics \
+  --workspace-root="$WS" \
+  --file-paths="$FILES_CSV" > /tmp/diag.json
+
+python3 "$SKILL_ROOT/scripts/kast-plan-utils.py" check-diagnostics /tmp/diag.json
+```
+
 ---
 
 ## NOT_FOUND on symbol resolve / references

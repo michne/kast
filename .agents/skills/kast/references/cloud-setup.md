@@ -122,6 +122,43 @@ steps:
 
 ---
 
+## CI: JSON Processing Without `jq`
+
+`jq` is not present in all CI images, and embedded `jq` expressions inside shell strings
+are a common source of quoting failures. Use `kast-plan-utils.py` instead — it ships with
+the skill and requires only `python3 >= 3.8`, which is available everywhere.
+
+```yaml
+# Example: GitHub Actions step for a rename + diagnostics check
+- name: Rename symbol with kast
+  env:
+    SKILL_ROOT: .agents/skills/kast
+    WS: ${{ github.workspace }}
+  run: |
+    set -euo pipefail
+
+    # Resolve kast
+    KAST="$(command -v kast || bash "$SKILL_ROOT/scripts/resolve-kast.sh")"
+
+    # Full rename: plan → apply → diagnostics exit code
+    bash "$SKILL_ROOT/scripts/kast-rename.sh" \
+      --workspace-root="$WS" \
+      --file-path="$WS/path/to/File.kt" \
+      --offset=556 \
+      --new-name=AcquisitionMapper
+```
+
+If you need the step-by-step approach instead of `kast-rename.sh`, replace every `jq`
+invocation with the matching `kast-plan-utils.py` subcommand:
+
+| Previously (jq) | Now (kast-plan-utils.py) |
+|---|---|
+| `jq '{edits:.edits,fileHashes:.fileHashes}' plan.json > req.json` | `python3 "$UTILS" extract-apply-request plan.json req.json` |
+| `jq -r '.affectedFiles \| join(",")' plan.json` | `python3 "$UTILS" affected-files-csv plan.json` |
+| `jq '.diagnostics \| map(select(.severity=="ERROR")) \| length' diag.json` | `python3 "$UTILS" check-diagnostics diag.json` |
+
+---
+
 ## Headless / Container Usage
 
 kast communicates over a Unix domain socket (`.kast/instances/` in the workspace root). This means:

@@ -18,6 +18,7 @@ import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.io.path.exists
 
 class AnalysisServerSocketTest {
@@ -106,6 +107,52 @@ class AnalysisServerSocketTest {
         assertTrue(lines.last().contains("\"backendName\":\"fake\""))
     }
 
+    @Test
+    fun `socket transport ignores client disconnects after request write`() {
+        val socketPath = tempDir.resolve("run").resolve("disconnect.sock")
+        val uncaughtClientErrors = CopyOnWriteArrayList<Throwable>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+            if (thread.name == "kast-uds-rpc-client") {
+                uncaughtClientErrors += error
+            } else {
+                previousHandler?.uncaughtException(thread, error)
+            }
+        }
+
+        try {
+            AnalysisServer(
+                backend = FakeAnalysisBackend.sample(tempDir),
+                config = AnalysisServerConfig(
+                    transport = AnalysisTransport.UnixDomainSocket(socketPath),
+                    descriptorDirectory = tempDir.resolve("instances"),
+                ),
+            ).start().use {
+                sendWithoutReadingResponse(
+                    socketPath = socketPath,
+                    request = JsonRpcRequest(
+                        id = JsonPrimitive(1),
+                        method = "runtime/status",
+                    ),
+                )
+
+                val response = callSocket(
+                    socketPath = socketPath,
+                    request = JsonRpcRequest(
+                        id = JsonPrimitive(2),
+                        method = "runtime/status",
+                    ),
+                )
+
+                assertTrue(response.contains("\"state\":\"READY\""))
+                awaitClientHandlerCompletion()
+                assertTrue(uncaughtClientErrors.isEmpty(), "Unexpected uncaught client errors: $uncaughtClientErrors")
+            }
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+        }
+    }
+
     private fun callSocket(
         socketPath: Path,
         request: JsonRpcRequest,
@@ -118,6 +165,25 @@ class AnalysisServerSocketTest {
             writer.newLine()
             writer.flush()
             checkNotNull(reader.readLine())
+        }
+    }
+
+    private fun sendWithoutReadingResponse(
+        socketPath: Path,
+        request: JsonRpcRequest,
+    ) {
+        SocketChannel.open(StandardProtocolFamily.UNIX).use { channel ->
+            channel.connect(UnixDomainSocketAddress.of(socketPath))
+            val writer = Channels.newWriter(channel, StandardCharsets.UTF_8.name()).buffered()
+            writer.write(json.encodeToString(JsonRpcRequest.serializer(), request))
+            writer.newLine()
+            writer.flush()
+        }
+    }
+
+    private fun awaitClientHandlerCompletion() {
+        repeat(50) {
+            Thread.sleep(10)
         }
     }
 }

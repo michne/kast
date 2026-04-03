@@ -497,6 +497,86 @@ Installs to `~/.local/share/kast/instances/<name>/` with a launcher at `~/.local
 
 ---
 
+## Helper Scripts
+
+The packaged kast skill ships two scripts in `"$SKILL_ROOT/scripts/"` that eliminate
+common shell-quoting pitfalls in automation workflows. Set `SKILL_ROOT` to the absolute
+path of the installed skill directory (e.g. `/your/workspace/.agents/skills/kast`).
+
+---
+
+### `kast-rename.sh` — One-shot rename workflow
+
+Runs the complete rename workflow (workspace ensure → plan → apply → diagnostics) in a
+single invocation. All JSON manipulation is handled by `kast-plan-utils.py`; no `jq`
+required. Temp files are created under `mktemp -d` and removed on exit via `trap`.
+
+```bash
+bash "$SKILL_ROOT/scripts/kast-rename.sh" \
+  --workspace-root=/absolute/path \
+  --file-path=/absolute/path/to/File.kt \
+  --offset=<offset> \
+  --new-name=NewName
+```
+
+**All four arguments are required.**
+
+**stdout:** `ApplyEditsResult` JSON (same schema as `edits apply`).
+
+**stderr:** step-by-step progress lines prefixed with `[kast-rename]`.
+
+**Exit codes:**
+- `0` — edits applied, diagnostics clean.
+- `1` — ERROR-severity diagnostics found, or apply/plan step failed.
+
+---
+
+### `kast-plan-utils.py` — JSON utilities for rename workflows
+
+Processes rename plan JSON and diagnostics result JSON. Avoids all `jq` usage so there
+are no shell-quoting edge cases. Invoke with `python3`.
+
+```bash
+UTILS="$SKILL_ROOT/scripts/kast-plan-utils.py"
+```
+
+**Subcommands:**
+
+| Subcommand | Arguments | stdout | Exit |
+|---|---|---|---|
+| `extract-apply-request` | `<plan-file> <out-file>` | Writes `{edits, fileHashes}` to `<out-file>` | 0 |
+| `affected-files-csv` | `<plan-file>` | Comma-separated absolute paths of affected files | 0 |
+| `affected-files-list` | `<plan-file>` | One absolute file path per line | 0 |
+| `count-edits` | `<plan-file>` | Number of edits in the plan | 0 |
+| `check-diagnostics` | `<diagnostics-result-file>` | ERROR count; ERROR details on stderr | 0 if clean, 1 if errors |
+
+`<plan-file>` is the JSON output of `kast rename --dry-run=true`.
+
+`<diagnostics-result-file>` is the JSON output of `kast diagnostics`.
+
+**Usage examples:**
+
+```bash
+PLAN=/tmp/rename-plan.json
+UTILS="$SKILL_ROOT/scripts/kast-plan-utils.py"
+
+# Inspect the plan before applying
+python3 "$UTILS" count-edits          "$PLAN"   # → 8
+python3 "$UTILS" affected-files-list  "$PLAN"   # → one path per line
+
+# Build the apply-request file (no jq, no inline JSON)
+python3 "$UTILS" extract-apply-request "$PLAN" /tmp/apply-req.json
+
+# Check diagnostics after applying
+"$KAST" diagnostics \
+  --workspace-root=/absolute/path \
+  --file-paths="$(python3 "$UTILS" affected-files-csv "$PLAN")" \
+  > /tmp/diag.json
+python3 "$UTILS" check-diagnostics /tmp/diag.json || echo "Errors found — see stderr"
+```
+
+---
+
 ## Error Response Format
 
 All errors return `ApiErrorResponse` on stdout with a non-zero exit code:

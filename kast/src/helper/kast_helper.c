@@ -430,24 +430,59 @@ static char *substr(const char *start, size_t len) {
     return out;
 }
 
+static char *json_unquote(const char *raw);
+
 static char *json_extract_value(const char *json, const char *key) {
-    char pattern[256];
-    snprintf(pattern, sizeof(pattern), "\"%s\"", key);
-    const char *cursor = json;
-    while ((cursor = strstr(cursor, pattern)) != NULL) {
-        const char *after_key = cursor + strlen(pattern);
-        after_key = skip_ws(after_key);
-        if (*after_key != ':') {
-            ++cursor;
-            continue;
+    const char *cursor = skip_ws(json);
+    if (*cursor != '{') {
+        return NULL;
+    }
+
+    cursor = skip_ws(cursor + 1);
+    while (*cursor != '\0' && *cursor != '}') {
+        if (*cursor != '"') {
+            return NULL;
         }
+
+        const char *encoded_key_end = scan_json_string_end(cursor);
+        if (encoded_key_end == NULL) {
+            return NULL;
+        }
+
+        char *encoded_key = substr(cursor, (size_t)(encoded_key_end - cursor));
+        char *decoded_key = json_unquote(encoded_key);
+        free(encoded_key);
+
+        const char *after_key = skip_ws(encoded_key_end);
+        if (*after_key != ':') {
+            free(decoded_key);
+            return NULL;
+        }
+
         const char *value_start = skip_ws(after_key + 1);
         const char *value_end = scan_json_value_end(value_start);
         if (value_end == NULL) {
+            free(decoded_key);
             return NULL;
         }
-        return substr(value_start, (size_t)(value_end - value_start));
+
+        if (strcmp(decoded_key, key) == 0) {
+            free(decoded_key);
+            return substr(value_start, (size_t)(value_end - value_start));
+        }
+        free(decoded_key);
+
+        cursor = skip_ws(value_end);
+        if (*cursor == ',') {
+            cursor = skip_ws(cursor + 1);
+            continue;
+        }
+        if (*cursor == '}') {
+            break;
+        }
+        return NULL;
     }
+
     return NULL;
 }
 
@@ -724,6 +759,22 @@ static void print_cli_error(const char *code, const char *message, const char *d
     free(builder.data);
 }
 
+static void append_rpc_debug_dump(const char *method, const char *response) {
+    const char *path = getenv("KAST_DEBUG_RPC_FILE");
+    if (path == NULL || path[0] == '\0' || method == NULL || response == NULL) {
+        return;
+    }
+
+    FILE *file = fopen(path, "a");
+    if (file == NULL) {
+        return;
+    }
+    fprintf(file, "method=%s\n", method);
+    fprintf(file, "response=%s\n", response);
+    fprintf(file, "---\n");
+    fclose(file);
+}
+
 static int unix_socket_call(const char *socket_path, const char *request_json, char **response_out) {
     int fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -811,6 +862,7 @@ static int rpc_call(
         return -1;
     }
     free(request.data);
+    append_rpc_debug_dump(method, response);
 
     char *result = json_extract_value(response, "result");
     if (result != NULL) {
@@ -1063,6 +1115,30 @@ static long parse_timeout_ms(const ParsedArgs *parsed) {
         return DEFAULT_WAIT_TIMEOUT_MS;
     }
     return strtol(value, NULL, 10);
+}
+
+static long parse_request_timeout_ms(const ParsedArgs *parsed) {
+    char *value = option_value(parsed, "request-timeout-ms");
+    if (value == NULL || value[0] == '\0') {
+        return DEFAULT_REQUEST_TIMEOUT_MS;
+    }
+    return strtol(value, NULL, 10);
+}
+
+static int parse_max_results(const ParsedArgs *parsed) {
+    char *value = option_value(parsed, "max-results");
+    if (value == NULL || value[0] == '\0') {
+        return DEFAULT_MAX_RESULTS;
+    }
+    return (int)strtol(value, NULL, 10);
+}
+
+static int parse_max_concurrent(const ParsedArgs *parsed) {
+    char *value = option_value(parsed, "max-concurrent-requests");
+    if (value == NULL || value[0] == '\0') {
+        return DEFAULT_MAX_CONCURRENT;
+    }
+    return (int)strtol(value, NULL, 10);
 }
 
 static char *build_symbol_query(const ParsedArgs *parsed) {
@@ -1378,7 +1454,16 @@ static Candidate *wait_for_ready_candidate(const char *workspace_root, long time
     return NULL;
 }
 
-static Candidate *ensure_runtime(const char *helper_dir, const char *workspace_root, long timeout_ms, bool *started, char **log_file_out) {
+static Candidate *ensure_runtime(
+    const char *helper_dir,
+    const char *workspace_root,
+    long timeout_ms,
+    long request_timeout_ms,
+    int max_results,
+    int max_concurrent,
+    bool *started,
+    char **log_file_out
+) {
     *started = false;
     *log_file_out = NULL;
 
@@ -1422,9 +1507,9 @@ static Candidate *ensure_runtime(const char *helper_dir, const char *workspace_r
         helper_dir,
         workspace_root,
         socket_path,
-        DEFAULT_REQUEST_TIMEOUT_MS,
-        DEFAULT_MAX_RESULTS,
-        DEFAULT_MAX_CONCURRENT,
+        request_timeout_ms,
+        max_results,
+        max_concurrent,
         log_file
     );
     free(socket_path);
@@ -1454,10 +1539,26 @@ static int handle_workspace_status(const char *workspace_root) {
     return 0;
 }
 
-static int handle_workspace_ensure(const char *helper_dir, const char *workspace_root, long timeout_ms) {
+static int handle_workspace_ensure(
+    const char *helper_dir,
+    const char *workspace_root,
+    long timeout_ms,
+    long request_timeout_ms,
+    int max_results,
+    int max_concurrent
+) {
     bool started = false;
     char *log_file = NULL;
-    Candidate *candidate = ensure_runtime(helper_dir, workspace_root, timeout_ms, &started, &log_file);
+    Candidate *candidate = ensure_runtime(
+        helper_dir,
+        workspace_root,
+        timeout_ms,
+        request_timeout_ms,
+        max_results,
+        max_concurrent,
+        &started,
+        &log_file
+    );
     if (candidate == NULL) {
         print_cli_error("RUNTIME_TIMEOUT", "Timed out waiting for standalone runtime to become ready", NULL);
         free(log_file);
@@ -1502,12 +1603,24 @@ static int call_analysis_method(
     const char *helper_dir,
     const char *workspace_root,
     long timeout_ms,
+    long request_timeout_ms,
+    int max_results,
+    int max_concurrent,
     const char *method,
     const char *params_json
 ) {
     bool started = false;
     char *log_file = NULL;
-    Candidate *candidate = ensure_runtime(helper_dir, workspace_root, timeout_ms, &started, &log_file);
+    Candidate *candidate = ensure_runtime(
+        helper_dir,
+        workspace_root,
+        timeout_ms,
+        request_timeout_ms,
+        max_results,
+        max_concurrent,
+        &started,
+        &log_file
+    );
     if (candidate == NULL) {
         print_cli_error("RUNTIME_TIMEOUT", "Timed out waiting for standalone runtime to become ready", NULL);
         free(log_file);
@@ -1558,6 +1671,9 @@ int main(int argc, char **argv) {
         exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
     }
     long timeout_ms = parse_timeout_ms(&parsed);
+    long request_timeout_ms = parse_request_timeout_ms(&parsed);
+    int max_results = parse_max_results(&parsed);
+    int max_concurrent = parse_max_concurrent(&parsed);
 
     int exit_code = 0;
     if (parsed.positional_count == 2 &&
@@ -1567,18 +1683,41 @@ int main(int argc, char **argv) {
     } else if (parsed.positional_count == 2 &&
                strcmp(parsed.positionals[0], "workspace") == 0 &&
                strcmp(parsed.positionals[1], "ensure") == 0) {
-        exit_code = handle_workspace_ensure(helper_dir, workspace_root, timeout_ms);
+        exit_code = handle_workspace_ensure(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent
+        );
     } else if (parsed.positional_count == 2 &&
                strcmp(parsed.positionals[0], "daemon") == 0 &&
                strcmp(parsed.positionals[1], "start") == 0) {
-        exit_code = handle_workspace_ensure(helper_dir, workspace_root, timeout_ms);
+        exit_code = handle_workspace_ensure(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent
+        );
     } else if (parsed.positional_count == 2 &&
                strcmp(parsed.positionals[0], "daemon") == 0 &&
                strcmp(parsed.positionals[1], "stop") == 0) {
         exit_code = handle_daemon_stop(workspace_root);
     } else if (parsed.positional_count == 1 &&
                strcmp(parsed.positionals[0], "capabilities") == 0) {
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "capabilities", "{}");
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "capabilities",
+            "{}"
+        );
     } else if (parsed.positional_count == 2 &&
                strcmp(parsed.positionals[0], "symbol") == 0 &&
                strcmp(parsed.positionals[1], "resolve") == 0) {
@@ -1586,7 +1725,16 @@ int main(int argc, char **argv) {
         if (params == NULL) {
             exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
         }
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "symbol/resolve", params);
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "symbol/resolve",
+            params
+        );
         free(params);
     } else if (parsed.positional_count == 1 &&
                strcmp(parsed.positionals[0], "references") == 0) {
@@ -1594,7 +1742,16 @@ int main(int argc, char **argv) {
         if (params == NULL) {
             exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
         }
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "references", params);
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "references",
+            params
+        );
         free(params);
     } else if (parsed.positional_count == 1 &&
                strcmp(parsed.positionals[0], "diagnostics") == 0) {
@@ -1602,7 +1759,16 @@ int main(int argc, char **argv) {
         if (params == NULL) {
             exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
         }
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "diagnostics", params);
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "diagnostics",
+            params
+        );
         free(params);
     } else if (parsed.positional_count == 1 &&
                strcmp(parsed.positionals[0], "rename") == 0) {
@@ -1610,7 +1776,16 @@ int main(int argc, char **argv) {
         if (params == NULL) {
             exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
         }
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "rename", params);
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "rename",
+            params
+        );
         free(params);
     } else if (parsed.positional_count == 2 &&
                strcmp(parsed.positionals[0], "edits") == 0 &&
@@ -1619,7 +1794,16 @@ int main(int argc, char **argv) {
         if (params == NULL) {
             exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);
         }
-        exit_code = call_analysis_method(helper_dir, workspace_root, timeout_ms, "edits/apply", params);
+        exit_code = call_analysis_method(
+            helper_dir,
+            workspace_root,
+            timeout_ms,
+            request_timeout_ms,
+            max_results,
+            max_concurrent,
+            "edits/apply",
+            params
+        );
         free(params);
     } else {
         exec_java_main(helper_dir, "io.github.amichne.kast.cli.CliMainKt", argc, argv);

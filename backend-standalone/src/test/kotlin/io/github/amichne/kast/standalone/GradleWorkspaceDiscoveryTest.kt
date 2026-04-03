@@ -107,4 +107,42 @@ class GradleWorkspaceDiscoveryTest {
         )
         assertEquals(listOf(normalizedPath), checkedPaths)
     }
+
+    @Test
+    fun `module dependency lookup resolves by gradle path when idea module name differs`() {
+        val lib = GradleModuleModel(
+            gradlePath = ":core:lib",
+            ideaModuleName = "myproject.core.lib",
+            mainSourceRoots = listOf(Path.of("/workspace/core/lib/src/main/kotlin")),
+            testSourceRoots = emptyList(),
+            mainOutputRoots = listOf(Path.of("/workspace/core/lib/build/classes/kotlin/main")),
+            testOutputRoots = emptyList(),
+            dependencies = emptyList(),
+        )
+        val app = GradleModuleModel(
+            gradlePath = ":app",
+            ideaModuleName = "myproject.app",
+            mainSourceRoots = listOf(Path.of("/workspace/app/src/main/kotlin")),
+            testSourceRoots = emptyList(),
+            mainOutputRoots = listOf(Path.of("/workspace/app/build/classes/kotlin/main")),
+            testOutputRoots = emptyList(),
+            dependencies = listOf(
+                GradleDependency.ModuleDependency(
+                    targetIdeaModuleName = ":core:lib",
+                    scope = GradleDependencyScope.COMPILE,
+                ),
+            ),
+        )
+
+        val layout = GradleWorkspaceDiscovery.buildStandaloneWorkspaceLayout(
+            gradleModules = listOf(app, lib),
+            extraClasspathRoots = emptyList(),
+        )
+        val modulesByName = layout.sourceModules.associateBy(StandaloneSourceModuleSpec::name)
+
+        assertEquals(
+            listOf(":core:lib[main]"),
+            modulesByName.getValue(":app[main]").dependencyModuleNames,
+        )
+    }
 }

@@ -23,7 +23,8 @@ internal object GradleWorkspaceDiscovery {
             StaticGradleWorkspaceDiscovery.discoverModules(workspaceRoot, settingsSnapshot)
         }
         val gradleModules = if (settingsSnapshot.shouldPreferStaticDiscovery()) {
-            staticModules()
+            val resolvedStaticModules = staticModules()
+            enrichStaticModulesWithToolingApiLibraries(workspaceRoot, resolvedStaticModules)
         } else {
             runCatching {
                 loadModulesWithToolingApi(workspaceRoot)
@@ -57,11 +58,46 @@ internal object GradleWorkspaceDiscovery {
                 }
         }
 
+    /**
+     * Large workspaces prefer static discovery for module structure (source roots,
+     * inter-project dependencies) because the Tooling API can be too slow. However,
+     * static discovery cannot resolve external Maven/Gradle repository dependencies —
+     * only `project(...)` and `files(...)` references are parsed from build scripts.
+     * It also misses dependencies declared via convention plugins, `allprojects`, or
+     * `subprojects` blocks in parent build scripts.
+     *
+     * This function bridges that gap: it still uses the Tooling API in best-effort mode
+     * to extract resolved dependencies and merges them onto the statically discovered
+     * modules. If the Tooling API fails entirely, the static modules are returned as-is.
+     */
+    private fun enrichStaticModulesWithToolingApiLibraries(
+        workspaceRoot: Path,
+        staticModules: List<GradleModuleModel>,
+    ): List<GradleModuleModel> {
+        val toolingModules = runCatching {
+            loadModulesWithToolingApi(workspaceRoot)
+        }.getOrNull()
+
+        if (toolingModules.isNullOrEmpty()) {
+            return staticModules
+        }
+
+        return mergeToolingAndStaticModules(
+            toolingModules = toolingModules,
+            staticModules = staticModules,
+        )
+    }
+
     internal fun buildStandaloneWorkspaceLayout(
         gradleModules: List<GradleModuleModel>,
         extraClasspathRoots: List<Path>,
     ): StandaloneWorkspaceLayout {
-        val moduleModelsByIdeaName = gradleModules.associateBy(GradleModuleModel::ideaModuleName)
+        val moduleModelsByIdeaName = buildMap {
+            gradleModules.forEach { module ->
+                putIfAbsent(module.ideaModuleName, module)
+                putIfAbsent(module.gradlePath, module)
+            }
+        }
         val availableMainSourceModuleNames = gradleModules
             .mapNotNull(GradleModuleModel::mainDependencyModuleName)
             .toSet()

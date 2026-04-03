@@ -3,7 +3,9 @@ package io.github.amichne.kast.standalone
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.psi.compiled.ClassFileDecompilers
+import com.intellij.psi.PsiManager
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.lang.java.JavaLanguage
 import com.intellij.lang.java.JavaParserDefinition
@@ -21,6 +23,9 @@ import org.jetbrains.kotlin.platform.jvm.JvmPlatforms
 import org.jetbrains.kotlin.psi.KtFile
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.ConcurrentHashMap
+import kotlin.concurrent.thread
 import kotlin.io.path.extension
 
 class StandaloneAnalysisSession(
@@ -28,11 +33,19 @@ class StandaloneAnalysisSession(
     sourceRoots: List<Path>,
     classpathRoots: List<Path>,
     moduleName: String,
+    private val initialSourceIndexBuilder: (() -> Map<String, List<String>>)? = null,
 ) : AutoCloseable {
     private val disposable: Disposable = Disposer.newDisposable("kast-standalone")
     private val ktFilesByPath: Map<String, KtFile> by lazy(::loadKtFilesByPath)
+    private val targetedKtFilesByPath = ConcurrentHashMap<String, KtFile>()
+    private val targetedCandidatePathsByLookupKey = ConcurrentHashMap<CandidateLookupKey, List<String>>()
+    private val initialSourceIndex = CompletableFuture<SourceIdentifierIndex>()
+    @Volatile
+    private var fullKtFileMapLoaded = false
 
     private val session: StandaloneAnalysisAPISession
+    private val sourceModuleSpecs: List<StandaloneSourceModuleSpec>
+    private val dependentModuleNamesBySourceModuleName: Map<String, Set<String>>
     val sourceModules: List<KaSourceModule>
     val resolvedSourceRoots: List<Path>
     private val resolvedClasspathRoots: List<Path>
@@ -47,6 +60,8 @@ class StandaloneAnalysisSession(
         require(workspaceLayout.sourceModules.isNotEmpty()) {
             "No source roots were found under ${normalizeStandalonePath(workspaceRoot)}"
         }
+        sourceModuleSpecs = workspaceLayout.sourceModules
+        dependentModuleNamesBySourceModuleName = buildDependentModuleNamesBySourceModuleName(sourceModuleSpecs)
 
         resolvedSourceRoots = workspaceLayout.sourceModules
             .flatMap { module -> module.sourceRoots }
@@ -108,18 +123,71 @@ class StandaloneAnalysisSession(
         check(sourceModules.isNotEmpty()) {
             "The standalone Analysis API session did not create any source modules"
         }
+        startInitialSourceIndex()
     }
 
     fun allKtFiles(): List<KtFile> = ktFilesByPath.values.sortedBy(::normalizeFileLookupPath)
 
     fun findKtFile(filePath: String): KtFile {
         val normalizedPath = normalizePath(Path.of(filePath)).toString()
-        return ktFilesByPath[normalizedPath]
+        if (fullKtFileMapLoaded) {
+            return ktFilesByPath[normalizedPath]
+                ?: throw NotFoundException(
+                    message = "The requested file is not part of the standalone analysis session",
+                    details = mapOf("filePath" to normalizedPath),
+                )
+        }
+
+        return targetedKtFilesByPath[normalizedPath]
+            ?: loadKtFileByPath(normalizedPath)
+                ?.also { file -> targetedKtFilesByPath[normalizedPath] = file }
             ?: throw NotFoundException(
                 message = "The requested file is not part of the standalone analysis session",
                 details = mapOf("filePath" to normalizedPath),
             )
     }
+
+    internal fun awaitInitialSourceIndex() {
+        initialSourceIndex.join()
+    }
+
+    internal fun candidateKotlinFilePaths(identifier: String): List<String> {
+        return candidateKotlinFilePaths(identifier = identifier, anchorFilePath = null)
+    }
+
+    internal fun candidateKotlinFilePaths(
+        identifier: String,
+        anchorFilePath: String?,
+    ): List<String> {
+        if (!identifier.isIndexableIdentifier()) {
+            return emptyList()
+        }
+
+        val anchorSourceModuleName = anchorFilePath?.let { filePath ->
+            sourceModuleNameForFile(normalizePath(Path.of(filePath)).toString())
+        }
+        val lookupKey = CandidateLookupKey(
+            identifier = identifier,
+            anchorSourceModuleName = anchorSourceModuleName,
+        )
+
+        val readyIndex = initialSourceIndex.getNow(null)
+        if (readyIndex != null) {
+            return filterCandidatePathsByAnchorScope(
+                candidatePaths = readyIndex.candidatePathsByIdentifier[identifier].orEmpty(),
+                anchorSourceModuleName = anchorSourceModuleName,
+            )
+        }
+
+        return targetedCandidatePathsByLookupKey.computeIfAbsent(lookupKey) { key ->
+            buildTargetedCandidatePaths(
+                identifier = key.identifier,
+                anchorSourceModuleName = key.anchorSourceModuleName,
+            )
+        }
+    }
+
+    internal fun isInitialSourceIndexReady(): Boolean = initialSourceIndex.isDone
 
     override fun close() {
         Disposer.dispose(disposable)
@@ -185,6 +253,143 @@ class StandaloneAnalysisSession(
         .flatMap { sourceModule -> session.modulesWithFiles[sourceModule].orEmpty().asSequence() }
         .filterIsInstance<KtFile>()
         .associateBy(::normalizeFileLookupPath)
+        .also { loadedFiles ->
+            fullKtFileMapLoaded = true
+            targetedKtFilesByPath.putAll(loadedFiles)
+        }
+
+    private fun loadKtFileByPath(normalizedPath: String): KtFile? {
+        val filePath = Path.of(normalizedPath)
+        if (filePath.extension != "kt" || resolvedSourceRoots.none(filePath::startsWith)) {
+            return null
+        }
+
+        val virtualFile = VirtualFileManager.getInstance().findFileByNioPath(filePath)
+            ?: VirtualFileManager.getInstance().refreshAndFindFileByNioPath(filePath)
+            ?: return null
+
+        return PsiManager.getInstance(session.project)
+            .findFile(virtualFile) as? KtFile
+    }
+
+    private fun startInitialSourceIndex() {
+        thread(
+            start = true,
+            isDaemon = true,
+            name = "kast-initial-source-index",
+        ) {
+            runCatching {
+                initialSourceIndexBuilder
+                    ?.invoke()
+                    ?.let(::SourceIdentifierIndex)
+                    ?: buildSourceIdentifierIndex()
+            }
+                .onSuccess(initialSourceIndex::complete)
+                .onFailure(initialSourceIndex::completeExceptionally)
+        }
+    }
+
+    private fun sourceIdentifierIndex(): SourceIdentifierIndex = initialSourceIndex.getNow(null) ?: initialSourceIndex.join()
+
+    private fun buildSourceIdentifierIndex(): SourceIdentifierIndex {
+        val candidatePathsByIdentifier = linkedMapOf<String, MutableSet<String>>()
+
+        resolvedSourceRoots.forEach { sourceRoot ->
+            if (!Files.isDirectory(sourceRoot)) {
+                return@forEach
+            }
+
+            Files.walk(sourceRoot).use { paths ->
+                paths
+                    .filter { path -> Files.isRegularFile(path) && path.extension == "kt" }
+                    .forEach { file ->
+                        val normalizedFilePath = normalizePath(file).toString()
+                        val identifiers = identifierRegex.findAll(Files.readString(file)).map { match -> match.value }.toSet()
+                        identifiers.forEach { identifier ->
+                            candidatePathsByIdentifier
+                                .getOrPut(identifier) { linkedSetOf() }
+                                .add(normalizedFilePath)
+                        }
+                    }
+            }
+        }
+
+        return SourceIdentifierIndex(
+            candidatePathsByIdentifier = candidatePathsByIdentifier
+                .mapValues { (_, filePaths) -> filePaths.toList().sorted() },
+        )
+    }
+
+    private fun buildTargetedCandidatePaths(identifier: String): List<String> = buildList {
+        resolvedSourceRoots.forEach { sourceRoot ->
+            if (!Files.isDirectory(sourceRoot)) {
+                return@forEach
+            }
+
+            Files.walk(sourceRoot).use { paths ->
+                paths
+                    .filter { path -> Files.isRegularFile(path) && path.extension == "kt" }
+                    .forEach { file ->
+                        val content = Files.readString(file)
+                        if (content.identifierOccurrenceOffsets(identifier).any()) {
+                            add(normalizePath(file).toString())
+                        }
+                    }
+            }
+        }
+    }.distinct().sorted()
+
+    private fun buildTargetedCandidatePaths(
+        identifier: String,
+        anchorSourceModuleName: String?,
+    ): List<String> = buildList {
+        val allowedSourceModuleNames = anchorSourceModuleName
+            ?.let(dependentModuleNamesBySourceModuleName::get)
+
+        sourceModuleSpecs
+            .asSequence()
+            .filter { moduleSpec -> allowedSourceModuleNames == null || moduleSpec.name in allowedSourceModuleNames }
+            .flatMap { moduleSpec -> moduleSpec.sourceRoots.asSequence() }
+            .distinct()
+            .sorted()
+            .forEach { sourceRoot ->
+                if (!Files.isDirectory(sourceRoot)) {
+                    return@forEach
+                }
+
+                Files.walk(sourceRoot).use { paths ->
+                    paths
+                        .filter { path -> Files.isRegularFile(path) && path.extension == "kt" }
+                        .forEach { file ->
+                            val content = Files.readString(file)
+                            if (content.identifierOccurrenceOffsets(identifier).any()) {
+                                add(normalizePath(file).toString())
+                            }
+                        }
+                }
+            }
+    }.distinct().sorted()
+
+    private fun filterCandidatePathsByAnchorScope(
+        candidatePaths: List<String>,
+        anchorSourceModuleName: String?,
+    ): List<String> {
+        if (anchorSourceModuleName == null) {
+            return candidatePaths
+        }
+
+        val allowedSourceModuleNames = dependentModuleNamesBySourceModuleName[anchorSourceModuleName].orEmpty()
+        return candidatePaths.filter { candidatePath ->
+            sourceModuleNameForFile(candidatePath) in allowedSourceModuleNames
+        }
+    }
+
+    private fun sourceModuleNameForFile(normalizedPath: String): String? {
+        val filePath = Path.of(normalizedPath)
+        return sourceModuleSpecs.firstOrNull { moduleSpec ->
+            moduleSpec.sourceRoots.any(filePath::startsWith)
+        }?.name
+    }
 
     private fun org.jetbrains.kotlin.analysis.project.structure.builder.KtModuleProviderBuilder.buildLibraryModule(
         moduleName: String,
@@ -211,6 +416,66 @@ class StandaloneAnalysisSession(
 
     private fun normalizePath(path: Path): Path {
         return normalizeStandalonePath(path)
+    }
+}
+
+internal data class SourceIdentifierIndex(
+    val candidatePathsByIdentifier: Map<String, List<String>>,
+)
+
+private data class CandidateLookupKey(
+    val identifier: String,
+    val anchorSourceModuleName: String?,
+)
+
+private val identifierRegex = Regex("""\b[A-Za-z_][A-Za-z0-9_]*\b""")
+
+private fun String.isIndexableIdentifier(): Boolean = identifierRegex.matches(this)
+
+private fun String.identifierOccurrenceOffsets(identifier: String): Sequence<Int> = sequence {
+    var searchFrom = 0
+    while (true) {
+        val occurrenceOffset = indexOf(identifier, startIndex = searchFrom)
+        if (occurrenceOffset == -1) {
+            break
+        }
+
+        val before = getOrNull(occurrenceOffset - 1)
+        val after = getOrNull(occurrenceOffset + identifier.length)
+        val startsIdentifier = before?.isKastIdentifierPart() != true
+        val endsIdentifier = after?.isKastIdentifierPart() != true
+        if (startsIdentifier && endsIdentifier) {
+            yield(occurrenceOffset)
+        }
+
+        searchFrom = occurrenceOffset + identifier.length
+    }
+}
+
+private fun Char.isKastIdentifierPart(): Boolean = this == '_' || isLetterOrDigit()
+
+private fun buildDependentModuleNamesBySourceModuleName(
+    sourceModules: List<StandaloneSourceModuleSpec>,
+): Map<String, Set<String>> {
+    val reverseDependencies = linkedMapOf<String, MutableSet<String>>()
+    sourceModules.forEach { sourceModule ->
+        sourceModule.dependencyModuleNames.forEach { dependencyModuleName ->
+            reverseDependencies.getOrPut(dependencyModuleName) { linkedSetOf() }.add(sourceModule.name)
+        }
+    }
+
+    return sourceModules.associate { sourceModule ->
+        val visitedModuleNames = linkedSetOf(sourceModule.name)
+        val pendingModuleNames = ArrayDeque(listOf(sourceModule.name))
+        while (pendingModuleNames.isNotEmpty()) {
+            val currentModuleName = pendingModuleNames.removeFirst()
+            reverseDependencies[currentModuleName].orEmpty().forEach { dependentModuleName ->
+                if (visitedModuleNames.add(dependentModuleName)) {
+                    pendingModuleNames += dependentModuleName
+                }
+            }
+        }
+        sourceModule.name to visitedModuleNames.toSet()
     }
 }
 

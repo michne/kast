@@ -57,6 +57,13 @@ private val kotlinCompilerJar = extractedIdeaFiles {
     include("**/plugins/Kotlin/kotlinc/lib/kotlin-compiler.jar")
 }
 
+private val compatCompileLibs: ConfigurableFileCollection = extractedIdeaFiles {
+    include("**/lib/**/*.jar")
+    exclude("**/plugins/**")
+    exclude("**/testFramework.jar")
+    exclude("**/testFramework-k1.jar")
+}
+
 abstract class ExtractLegacyPluginClassesTask : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
@@ -160,7 +167,7 @@ val extractLegacyPluginClasses: TaskProvider<ExtractLegacyPluginClassesTask> by 
 val compileCompatJava: TaskProvider<JavaCompile> by tasks.registering(JavaCompile::class) {
     dependsOn(extractIdeaDistribution)
     source = fileTree("src/compat/java") { include("**/*.java") }
-    classpath = files(appJar, kotlinCompilerJar)
+    classpath = files(compatCompileLibs, kotlinCompilerJar)
     destinationDirectory.set(layout.buildDirectory.dir("compat-classes"))
     sourceCompatibility = "11"
     targetCompatibility = "11"
@@ -177,14 +184,7 @@ val buildIdeCompatJar: TaskProvider<Jar> by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-val ideaLibs: ConfigurableFileCollection = extractedIdeaFiles {
-    include("**/lib/**/*.jar")
-    exclude("**/plugins/**")
-    // testFramework.jar auto-registers ThreadLeakTrackerExtension (JUnit 5 extension)
-    // which needs --add-opens for javax.swing and is not needed for standalone analysis.
-    exclude("**/testFramework.jar")
-    exclude("**/testFramework-k1.jar")
-}
+val ideaLibs: ConfigurableFileCollection = compatCompileLibs
 val kotlinPluginLibs: ConfigurableFileCollection = extractedIdeaFiles {
     include("**/plugins/Kotlin/lib/**/*.jar")
     // kotlin-jps-plugin.jar ships an old Java CompilerConfiguration (no Kotlin companion)

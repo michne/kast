@@ -2,11 +2,15 @@
 # Resolve the kast CLI binary with a discovery cascade.
 # Prints the absolute path to stdout and exits 0 on success.
 # Prints diagnostics to stderr and exits 1 on failure.
-set -eu
+set -euo pipefail
 
-# Determine the project root: the directory containing this script's skill,
-SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"
+# Determine the project root: the directory containing this skill's skill,
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${SCRIPT_DIR}")"
+
+# Default to empty; only populated inside the KAST_SOURCE_ROOT block below.
+GRADLE_SCRIPT=""
+DIST_SCRIPT=""
 
 # 1. PATH — preferred if already installed
 if command -v kast >/dev/null 2>&1; then
@@ -70,8 +74,8 @@ fi
 
 printf 'kast CLI not found. Tried:\n' >&2
 printf '  1. PATH\n' >&2
-printf '  2. %s\n' "${GRADLE_SCRIPT}" >&2
-printf '  3. %s\n' "${DIST_SCRIPT}" >&2
+printf '  2. %s\n' "${GRADLE_SCRIPT:-<KAST_SOURCE_ROOT not set — skipped>}" >&2
+printf '  3. %s\n' "${DIST_SCRIPT:-<KAST_SOURCE_ROOT not set — skipped>}" >&2
 printf '  4. Auto-build via ./gradlew :kast:writeWrapperScript\n' >&2
 printf '\n' >&2
 printf 'Install options:\n' >&2

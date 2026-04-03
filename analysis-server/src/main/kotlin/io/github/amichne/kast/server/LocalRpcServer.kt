@@ -4,12 +4,15 @@ import kotlinx.coroutines.runBlocking
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.Closeable
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.net.StandardProtocolFamily
 import java.net.UnixDomainSocketAddress
+import java.nio.channels.AsynchronousCloseException
 import java.nio.channels.Channels
+import java.nio.channels.ClosedChannelException
 import java.nio.channels.ServerSocketChannel
 import java.nio.channels.SocketChannel
 import java.nio.charset.StandardCharsets
@@ -79,11 +82,17 @@ internal class UnixDomainSocketRpcServer(
     private fun handleClient(channel: SocketChannel) {
         val reader = Channels.newReader(channel, StandardCharsets.UTF_8.name())
         val writer = Channels.newWriter(channel, StandardCharsets.UTF_8.name())
-        processRpcStream(
-            dispatcher = dispatcher,
-            reader = reader.buffered(),
-            writer = writer.buffered(),
-        )
+        runCatching {
+            processRpcStream(
+                dispatcher = dispatcher,
+                reader = reader.buffered(),
+                writer = writer.buffered(),
+            )
+        }.getOrElse { error ->
+            if (!isExpectedClientDisconnect(error)) {
+                throw error
+            }
+        }
     }
 }
 
@@ -142,4 +151,29 @@ private fun processRpcStream(
             writer.flush()
         }
     }
+}
+
+private fun isExpectedClientDisconnect(error: Throwable): Boolean {
+    var current: Throwable? = error
+    while (current != null) {
+        when (current) {
+            is ClosedChannelException,
+            is AsynchronousCloseException,
+            -> return true
+
+            is IOException -> {
+                val message = current.message.orEmpty()
+                if (
+                    message.contains("Broken pipe", ignoreCase = true) ||
+                    message.contains("Connection reset", ignoreCase = true) ||
+                    message.contains("Socket closed", ignoreCase = true)
+                ) {
+                    return true
+                }
+            }
+        }
+        current = current.cause
+    }
+
+    return false
 }

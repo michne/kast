@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CountDownLatch
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
 import kotlin.io.path.createDirectories
@@ -150,7 +151,142 @@ class StandaloneWorkspaceDiscoveryTest {
 
             session.findKtFile(workspaceRoot.resolve("app/src/main/kotlin/sample/Use.kt").toString())
 
-            assertTrue(session.ktFilesByPathDelegate().isInitialized())
+            assertFalse(session.ktFilesByPathDelegate().isInitialized())
+        }
+    }
+
+    @Test
+    fun `standalone session eagerly builds lexical candidate index without initializing full Kotlin file map`() {
+        createGradleWorkspace(includeLocalTestJar = false)
+        val session = StandaloneAnalysisSession(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "ignored",
+        )
+        session.use { session ->
+            assertFalse(session.ktFilesByPathDelegate().isInitialized())
+
+            session.awaitInitialSourceIndex()
+
+            assertEquals(
+                setOf(
+                    normalizePath(workspaceRoot.resolve("app/src/main/kotlin/sample/Use.kt")),
+                    normalizePath(workspaceRoot.resolve("lib/src/main/kotlin/sample/Greeter.kt")),
+                ),
+                session.candidateKotlinFilePaths("greet").toSet(),
+            )
+            assertFalse(session.ktFilesByPathDelegate().isInitialized())
+        }
+    }
+
+    @Test
+    fun `candidate lookup falls back to targeted scan while eager index is still building`() {
+        createGradleWorkspace(includeLocalTestJar = false)
+        val unblockIndexBuild = CountDownLatch(1)
+        val session = StandaloneAnalysisSession(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "ignored",
+            initialSourceIndexBuilder = {
+                unblockIndexBuild.await()
+                emptyMap()
+            },
+        )
+        session.use { session ->
+            assertFalse(session.isInitialSourceIndexReady())
+
+            assertEquals(
+                setOf(
+                    normalizePath(workspaceRoot.resolve("app/src/main/kotlin/sample/Use.kt")),
+                    normalizePath(workspaceRoot.resolve("lib/src/main/kotlin/sample/Greeter.kt")),
+                ),
+                session.candidateKotlinFilePaths("greet").toSet(),
+            )
+            assertFalse(session.ktFilesByPathDelegate().isInitialized())
+            assertFalse(session.isInitialSourceIndexReady())
+            unblockIndexBuild.countDown()
+            session.awaitInitialSourceIndex()
+        }
+    }
+
+    @Test
+    fun `candidate lookup scopes search to declaring module and dependents`() {
+        writeFile(
+            relativePath = "settings.gradle.kts",
+            content = """
+                rootProject.name = "workspace"
+                include(":app", ":lib", ":unrelated")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build.gradle.kts",
+            content = buildString {
+                appendLine("""plugins { idea }""")
+                appendLine("""subprojects {""")
+                appendLine("""    apply(plugin = "java-library")""")
+                appendLine("""    repositories { mavenCentral() }""")
+                appendLine("""    configure<org.gradle.api.tasks.SourceSetContainer> {""")
+                appendLine("""        named("main") { java.srcDir("src/main/kotlin") }""")
+                appendLine("""    }""")
+                appendLine("""}""")
+            },
+        )
+        writeFile(
+            relativePath = "app/build.gradle.kts",
+            content = """
+                dependencies {
+                    implementation(project(":lib"))
+                }
+            """.trimIndent() + "\n",
+        )
+        writeFile(relativePath = "lib/build.gradle.kts", content = "")
+        writeFile(relativePath = "unrelated/build.gradle.kts", content = "")
+        val declarationFile = writeFile(
+            relativePath = "lib/src/main/kotlin/sample/Greeter.kt",
+            content = $$"""
+                package sample
+
+                fun greet(name: String): String = "hi $name"
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "app/src/main/kotlin/sample/Use.kt",
+            content = """
+                package sample
+
+                fun use(): String = greet("kast")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "unrelated/src/main/kotlin/sample/Unrelated.kt",
+            content = """
+                package sample
+
+                fun unrelated(): String = greet("not-a-real-reference")
+            """.trimIndent() + "\n",
+        )
+
+        val session = StandaloneAnalysisSession(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "ignored",
+        )
+        session.use { session ->
+            session.awaitInitialSourceIndex()
+
+            assertEquals(
+                setOf(
+                    normalizePath(declarationFile),
+                    normalizePath(workspaceRoot.resolve("app/src/main/kotlin/sample/Use.kt")),
+                ),
+                session.candidateKotlinFilePaths(
+                    identifier = "greet",
+                    anchorFilePath = declarationFile.toString(),
+                ).toSet(),
+            )
         }
     }
 

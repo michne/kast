@@ -2,18 +2,39 @@ package io.github.amichne.kast.cli
 
 import io.github.amichne.kast.api.BackendCapabilities
 import io.github.amichne.kast.api.DiagnosticsResult
+import io.github.amichne.kast.api.RenameResult
+import io.github.amichne.kast.api.RuntimeState
+import io.github.amichne.kast.api.RuntimeStatusResponse
+import io.github.amichne.kast.api.ServerInstanceDescriptor
+import io.github.amichne.kast.api.ServerLimits
+import io.github.amichne.kast.server.JsonRpcRequest
+import io.github.amichne.kast.server.JsonRpcSuccessResponse
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Files
 import java.nio.file.Path
+import java.net.StandardProtocolFamily
+import java.net.UnixDomainSocketAddress
+import java.nio.channels.Channels
+import java.nio.channels.ServerSocketChannel
+import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.io.path.writeText
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToJsonElement
 
 class KastWrapperTest {
     @TempDir
     lateinit var tempDir: Path
+
+    private val transportJson = Json {
+        encodeDefaults = true
+        explicitNulls = false
+        prettyPrint = false
+    }
 
     @Test
     fun `wrapper can ensure status capabilities and diagnostics through helper path`() {
@@ -86,6 +107,137 @@ class KastWrapperTest {
         assertEquals("", completion.stderr)
     }
 
+    @Test
+    fun `wrapper propagates custom daemon request timeout through helper path`() {
+        val workspace = tempDir.resolve("workspace-timeout")
+        val sourceFile = workspace
+            .resolve("src/main/kotlin/example/Sample.kt")
+            .createDirectoriesForParent()
+        sourceFile.writeText(
+            """
+            package example
+
+            fun greet(): String = "hi"
+            """.trimIndent() + "\n",
+        )
+
+        try {
+            val ensure = runCli(
+                "workspace",
+                "ensure",
+                "--workspace-root=$workspace",
+                "--request-timeout-ms=120000",
+            )
+            val ensureResult = defaultCliJson().decodeFromString<WorkspaceEnsureResult>(ensure.stdout)
+
+            assertEquals(120_000L, ensureResult.selected.capabilities?.limits?.requestTimeoutMillis)
+
+            val capabilities = runCli(
+                "capabilities",
+                "--workspace-root=$workspace",
+            )
+            val capabilitiesResult = defaultCliJson().decodeFromString<BackendCapabilities>(capabilities.stdout)
+            assertEquals(120_000L, capabilitiesResult.limits.requestTimeoutMillis)
+        } finally {
+            runCli(
+                "daemon",
+                "stop",
+                "--workspace-root=$workspace",
+                allowFailure = true,
+            )
+        }
+    }
+
+    @Test
+    fun `wrapper helper parses large rename result from socket daemon`() {
+        val workspace = tempDir.resolve("workspace-large-rename")
+        val sanitizedWorkspaceRoot = "/workspace/sample-app"
+        Files.createDirectories(workspace.resolve(".kast/instances"))
+        val socketPath = tempDir.resolve("fake.sock")
+        Files.deleteIfExists(socketPath)
+        val descriptorPath = workspace.resolve(".kast/instances/fake.json")
+        val keepAliveProcess = ProcessBuilder("/bin/sh", "-c", "sleep 60").start()
+        descriptorPath.writeText(
+            transportJson.encodeToString(
+                ServerInstanceDescriptor.serializer(),
+                ServerInstanceDescriptor(
+                    workspaceRoot = workspace.toString(),
+                    backendName = "standalone",
+                    backendVersion = "0.1.0",
+                    socketPath = socketPath.toString(),
+                    pid = keepAliveProcess.pid(),
+                ),
+            ),
+        )
+
+        val runtimeStatus = RuntimeStatusResponse(
+            state = RuntimeState.READY,
+            healthy = true,
+            active = true,
+            indexing = false,
+            backendName = "standalone",
+            backendVersion = "0.1.0",
+            workspaceRoot = workspace.toString(),
+            message = "ready",
+        )
+        val capabilities = BackendCapabilities(
+            backendName = "standalone",
+            backendVersion = "0.1.0",
+            workspaceRoot = workspace.toString(),
+            readCapabilities = emptySet(),
+            mutationCapabilities = setOf(io.github.amichne.kast.api.MutationCapability.RENAME),
+            limits = ServerLimits(
+                maxResults = 500,
+                requestTimeoutMillis = 120_000,
+                maxConcurrentRequests = 4,
+            ),
+        )
+        val renameResponse = loadRenameResponseFixture()
+
+        val serverThread = startFakeDaemon(
+            socketPath = socketPath,
+            responsesByMethod = mapOf(
+                "runtime/status" to transportJson.encodeToString(
+                    JsonRpcSuccessResponse.serializer(),
+                    JsonRpcSuccessResponse(
+                        id = kotlinx.serialization.json.JsonPrimitive(1),
+                        result = transportJson.encodeToJsonElement(RuntimeStatusResponse.serializer(), runtimeStatus),
+                    ),
+                ),
+                "capabilities" to transportJson.encodeToString(
+                    JsonRpcSuccessResponse.serializer(),
+                    JsonRpcSuccessResponse(
+                        id = kotlinx.serialization.json.JsonPrimitive(1),
+                        result = transportJson.encodeToJsonElement(BackendCapabilities.serializer(), capabilities),
+                    ),
+                ),
+                "rename" to renameResponse,
+            ),
+            expectedRequests = 3,
+        )
+
+        try {
+            val rename = runCli(
+                "rename",
+                "--workspace-root=$workspace",
+                "--file-path=${workspace.resolve("src/main/kotlin/example/Sample.kt")}",
+                "--offset=0",
+                "--new-name=RenamedSymbol",
+            )
+
+            val renameOutput = defaultCliJson().decodeFromString<RenameResult>(rename.stdout)
+            assertEquals(8, renameOutput.edits.size)
+            assertTrue(renameOutput.edits.all { edit -> edit.filePath.startsWith(sanitizedWorkspaceRoot) })
+            assertTrue(renameOutput.fileHashes.all { fileHash -> fileHash.filePath.startsWith(sanitizedWorkspaceRoot) })
+            assertTrue(renameOutput.affectedFiles.all { filePath -> filePath.startsWith(sanitizedWorkspaceRoot) })
+            assertTrue(renameOutput.edits.none { edit -> edit.filePath.contains("/Users/") })
+            assertTrue(rename.stderr.contains("daemon:"))
+        } finally {
+            keepAliveProcess.destroyForcibly()
+            serverThread.join(TimeUnit.SECONDS.toMillis(5))
+        }
+    }
+
     private fun runCli(
         vararg args: String,
         allowFailure: Boolean = false,
@@ -113,6 +265,40 @@ class KastWrapperTest {
     private fun Path.createDirectoriesForParent(): Path {
         Files.createDirectories(checkNotNull(parent))
         return this
+    }
+
+    private fun loadRenameResponseFixture(): String {
+        return checkNotNull(javaClass.classLoader.getResourceAsStream("io/github/amichne/kast/cli/large-rename-response.json")) {
+            "Missing large rename response fixture"
+        }.bufferedReader().use { reader -> reader.readText().trim() }
+    }
+
+    private fun startFakeDaemon(
+        socketPath: Path,
+        responsesByMethod: Map<String, String>,
+        expectedRequests: Int,
+    ): Thread {
+        Files.createDirectories(checkNotNull(socketPath.parent))
+        Files.deleteIfExists(socketPath)
+        return thread(start = true, isDaemon = true, name = "fake-kast-daemon") {
+            ServerSocketChannel.open(StandardProtocolFamily.UNIX).use { server ->
+                server.bind(UnixDomainSocketAddress.of(socketPath))
+                repeat(expectedRequests) {
+                    server.accept().use { channel ->
+                        val reader = Channels.newReader(channel, StandardCharsets.UTF_8.name()).buffered()
+                        val writer = Channels.newWriter(channel, StandardCharsets.UTF_8.name()).buffered()
+                        val requestLine = checkNotNull(reader.readLine())
+                        val request = transportJson.decodeFromString(JsonRpcRequest.serializer(), requestLine)
+                        val response = checkNotNull(responsesByMethod[request.method]) {
+                            "Unexpected method: ${request.method}"
+                        }
+                        writer.write(response)
+                        writer.newLine()
+                        writer.flush()
+                    }
+                }
+            }
+        }
     }
 }
 
