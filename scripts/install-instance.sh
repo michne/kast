@@ -59,6 +59,11 @@ output_dir = Path(sys.argv[2])
 output_dir.mkdir(parents=True, exist_ok=True)
 
 with zipfile.ZipFile(archive_path) as archive:
+    resolved_output = output_dir.resolve()
+    for member in archive.namelist():
+        dest = (output_dir / member).resolve()
+        if not str(dest).startswith(str(resolved_output) + "/"):
+            raise Exception(f"Zip-slip attempt detected: {member}")
     archive.extractall(output_dir)
 PY
 }
@@ -74,7 +79,7 @@ resolve_default_archive() {
   done
   shopt -u nullglob
 
-  [[ -n "$newest" ]] || die "No portable zip found under ${repo_root}/kast/build/distributions. Run ./gradlew :kast:portableDistZip or pass --archive."
+  [[ -n "$newest" ]] || die "No portable zip found under ${repo_root}/kast/build/distributions. Run ./build.sh or pass --archive."
   printf '%s\n' "$newest"
 }
 

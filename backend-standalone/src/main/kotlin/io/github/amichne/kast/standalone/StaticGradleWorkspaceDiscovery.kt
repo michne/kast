@@ -1,6 +1,5 @@
 package io.github.amichne.kast.standalone
 
-import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
 import kotlin.io.path.isDirectory
@@ -188,7 +187,7 @@ internal object StaticGradleWorkspaceDiscovery {
         projectDirectory.resolve("build/classes/java/${sourceSet.id}"),
         projectDirectory.resolve("build/classes/kotlin/${sourceSet.id}"),
         projectDirectory.resolve("build/resources/${sourceSet.id}"),
-    ).map(::normalizeStandalonePath).distinct().sorted()
+    ).filter(Path::isDirectory).map(::normalizeStandalonePath).distinct().sorted()
 
     private fun projectDirectoryFor(
         workspaceRoot: Path,

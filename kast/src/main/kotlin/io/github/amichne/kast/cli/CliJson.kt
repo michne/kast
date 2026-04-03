@@ -7,7 +7,6 @@ import io.github.amichne.kast.api.DiagnosticsResult
 import io.github.amichne.kast.api.ReferencesResult
 import io.github.amichne.kast.api.RenameResult
 import io.github.amichne.kast.api.SymbolResult
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
 internal fun defaultCliJson(): Json = Json {
@@ -25,6 +24,7 @@ internal fun writeCliJson(
         is WorkspaceStatusResult -> json.encodeToString(value)
         is WorkspaceEnsureResult -> json.encodeToString(value)
         is DaemonStopResult -> json.encodeToString(value)
+        is InstallResult -> json.encodeToString(value)
         is BackendCapabilities -> json.encodeToString(value)
         is SymbolResult -> json.encodeToString(value)
         is ReferencesResult -> json.encodeToString(value)
