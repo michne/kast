@@ -2,6 +2,11 @@
 
 Full syntax, JSON schemas, and request-file formats for all public kast commands.
 
+> **Output redirection:** All command examples below show bare invocations for
+> readability. In practice, always redirect per the SKILL.md bootstrap pattern:
+> `> "$KAST_RESULT" 2> "$KAST_STDERR"`. Read `$KAST_RESULT` for the JSON result.
+> Only read `$KAST_STDERR` when the exit code is non-zero. See SKILL.md Section 0.
+
 ---
 
 ## Common Options
@@ -121,7 +126,12 @@ kast capabilities \
   "backendName": "kotlin-analysis",
   "backendVersion": "1.0.0",
   "workspaceRoot": "/absolute/path",
-  "readCapabilities": ["RESOLVE_SYMBOL", "FIND_REFERENCES", "DIAGNOSTICS"],
+  "readCapabilities": [
+    "RESOLVE_SYMBOL",
+    "FIND_REFERENCES",
+    "CALL_HIERARCHY",
+    "DIAGNOSTICS"
+  ],
   "mutationCapabilities": ["RENAME", "APPLY_EDITS"],
   "limits": {
     "maxResults": 500,
@@ -260,6 +270,100 @@ kast references \
 `page.truncated = true` means results were capped by `limits.maxResults`. Currently no pagination — truncation is final.
 
 **Errors:** `NOT_FOUND`, `CAPABILITY_NOT_SUPPORTED` (`FIND_REFERENCES`).
+
+---
+
+### `call hierarchy`
+
+Expand a bounded incoming or outgoing call tree from the symbol at a file
+offset.
+
+**Inline form:**
+```
+kast call hierarchy \
+  --workspace-root=/absolute/path \
+  --file-path=/absolute/path/to/File.kt \
+  --offset=123 \
+  --direction=incoming \
+  [--depth=3] \
+  [--max-total-calls=256] \
+  [--max-children-per-node=64] \
+  [--timeout-millis=5000] \
+  [--persist-to-git-sha-cache=true]
+```
+
+**Request-file form:**
+```
+kast call hierarchy \
+  --workspace-root=/absolute/path \
+  --request-file=/absolute/path/to/query.json
+```
+
+**Request file schema — `CallHierarchyQuery`:**
+```json
+{
+  "position": {
+    "filePath": "/absolute/path/to/File.kt",
+    "offset": 123
+  },
+  "direction": "INCOMING",
+  "depth": 3,
+  "maxTotalCalls": 256,
+  "maxChildrenPerNode": 64,
+  "timeoutMillis": null,
+  "persistToGitShaCache": false
+}
+```
+
+**Output — `CallHierarchyResult`:**
+```json
+{
+  "root": {
+    "symbol": {
+      "fqName": "io.example.MyClass.myFunction",
+      "kind": "FUNCTION",
+      "location": {
+        "filePath": "/absolute/path/to/File.kt",
+        "startOffset": 120,
+        "endOffset": 130,
+        "startLine": 10,
+        "startColumn": 4,
+        "preview": "fun myFunction()"
+      },
+      "type": "() -> Unit",
+      "containingDeclaration": "io.example.MyClass"
+    },
+    "callSite": null,
+    "truncation": null,
+    "children": []
+  },
+  "stats": {
+    "totalNodes": 1,
+    "totalEdges": 0,
+    "truncatedNodes": 0,
+    "maxDepthReached": 0,
+    "timeoutReached": false,
+    "maxTotalCallsReached": false,
+    "maxChildrenPerNodeReached": false,
+    "filesVisited": 1
+  },
+  "persistence": null,
+  "schemaVersion": 1
+}
+```
+
+`direction` values: `INCOMING` | `OUTGOING`
+
+`callSite` is `Location | null`. It is usually null on the root node and
+populated for child edges.
+
+`truncation.reason` values: `CYCLE` | `MAX_TOTAL_CALLS` |
+`MAX_CHILDREN_PER_NODE` | `TIMEOUT`
+
+`persistence` is `CallHierarchyPersistence | null` and is populated when
+cache persistence is requested and a git-SHA-scoped cache is available.
+
+**Errors:** `NOT_FOUND`, `CAPABILITY_NOT_SUPPORTED` (`CALL_HIERARCHY`).
 
 ---
 
@@ -571,8 +675,8 @@ python3 "$UTILS" extract-apply-request "$PLAN" /tmp/apply-req.json
 "$KAST" diagnostics \
   --workspace-root=/absolute/path \
   --file-paths="$(python3 "$UTILS" affected-files-csv "$PLAN")" \
-  > /tmp/diag.json
-python3 "$UTILS" check-diagnostics /tmp/diag.json || echo "Errors found — see stderr"
+  > "$KAST_RESULT" 2> "$KAST_STDERR"
+python3 "$UTILS" check-diagnostics "$KAST_RESULT" || echo "Errors found — see stderr"
 ```
 
 ---
