@@ -9,7 +9,7 @@ import java.util.concurrent.TimeoutException
 
 class GradleWorkspaceDiscoveryTest {
     @Test
-    fun `build standalone workspace layout preserves main and test source set semantics`() {
+    fun `build standalone workspace layout preserves main, testFixtures, and test source set semantics`() {
         val lib = GradleModuleModel(
             gradlePath = ":lib",
             ideaModuleName = "lib",
@@ -32,8 +32,10 @@ class GradleWorkspaceDiscoveryTest {
             gradlePath = ":app",
             ideaModuleName = "app",
             mainSourceRoots = listOf(Path.of("/workspace/app/src/main/kotlin")),
+            testFixturesSourceRoots = listOf(Path.of("/workspace/app/src/testFixtures/kotlin")),
             testSourceRoots = listOf(Path.of("/workspace/app/src/test/kotlin")),
             mainOutputRoots = listOf(Path.of("/workspace/app/build/classes/kotlin/main")),
+            testFixturesOutputRoots = listOf(Path.of("/workspace/app/build/classes/kotlin/testFixtures")),
             testOutputRoots = listOf(Path.of("/workspace/app/build/classes/kotlin/test")),
             dependencies = listOf(
                 GradleDependency.ModuleDependency(
@@ -61,12 +63,17 @@ class GradleWorkspaceDiscoveryTest {
         )
         val modulesByName = layout.sourceModules.associateBy(StandaloneSourceModuleSpec::name)
 
+        assertEquals(setOf(":app[main]", ":app[testFixtures]", ":app[test]", ":lib[main]"), modulesByName.keys)
         assertEquals(
             listOf(":lib[main]"),
             modulesByName.getValue(":app[main]").dependencyModuleNames,
         )
         assertEquals(
             listOf(":app[main]", ":lib[main]"),
+            modulesByName.getValue(":app[testFixtures]").dependencyModuleNames,
+        )
+        assertEquals(
+            listOf(":app[main]", ":app[testFixtures]", ":lib[main]"),
             modulesByName.getValue(":app[test]").dependencyModuleNames,
         )
         assertEquals(
@@ -76,6 +83,14 @@ class GradleWorkspaceDiscoveryTest {
                 Path.of("/workspace/generated/build/classes/kotlin/main"),
             ),
             modulesByName.getValue(":app[main]").binaryRoots,
+        )
+        assertEquals(
+            listOf(
+                Path.of("/deps/runtime.jar"),
+                Path.of("/deps/shared.jar"),
+                Path.of("/workspace/generated/build/classes/kotlin/main"),
+            ),
+            modulesByName.getValue(":app[testFixtures]").binaryRoots,
         )
         assertEquals(
             listOf(

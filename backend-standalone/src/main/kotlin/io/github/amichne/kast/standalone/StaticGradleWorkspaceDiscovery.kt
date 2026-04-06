@@ -7,17 +7,21 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
 
 internal object StaticGradleWorkspaceDiscovery {
+    private const val supportedDependencyConfigurations =
+        "api|implementation|compileOnly|runtimeOnly|" +
+            "testApi|testImplementation|testCompileOnly|testRuntimeOnly|" +
+            "testFixturesApi|testFixturesImplementation|testFixturesCompileOnly|testFixturesRuntimeOnly"
     private val scopedProjectDependencyPattern = Regex(
-        """(?s)\b(api|implementation|compileOnly|runtimeOnly|testApi|testImplementation|testCompileOnly|testRuntimeOnly)\s*\(\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
+        """(?s)\b($supportedDependencyConfigurations)\s*\(\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
     )
     private val addedProjectDependencyPattern = Regex(
-        """(?s)\badd\s*\(\s*[\"'](api|implementation|compileOnly|runtimeOnly|testApi|testImplementation|testCompileOnly|testRuntimeOnly)[\"']\s*,\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
+        """(?s)\badd\s*\(\s*[\"']($supportedDependencyConfigurations)[\"']\s*,\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
     )
     private val scopedFileDependencyPattern = Regex(
-        """(?s)\b(api|implementation|compileOnly|runtimeOnly|testApi|testImplementation|testCompileOnly|testRuntimeOnly)\s*\(\s*files\((.*?)\)\s*\)""",
+        """(?s)\b($supportedDependencyConfigurations)\s*\(\s*files\((.*?)\)\s*\)""",
     )
     private val addedFileDependencyPattern = Regex(
-        """(?s)\badd\s*\(\s*[\"'](api|implementation|compileOnly|runtimeOnly|testApi|testImplementation|testCompileOnly|testRuntimeOnly)[\"']\s*,\s*files\((.*?)\)\s*\)""",
+        """(?s)\badd\s*\(\s*[\"']($supportedDependencyConfigurations)[\"']\s*,\s*files\((.*?)\)\s*\)""",
     )
     private val rootProjectFilePattern = Regex(
         """(?:rootProject\.)?layout\.projectDirectory\.file\(\s*[\"']([^\"']+)[\"']\s*\)""",
@@ -64,8 +68,10 @@ internal object StaticGradleWorkspaceDiscovery {
             ideaModuleName = projectPath,
             mainSourceRoots = sourceRoots(projectDirectory, GradleSourceSet.MAIN),
             testSourceRoots = sourceRoots(projectDirectory, GradleSourceSet.TEST),
+            testFixturesSourceRoots = sourceRoots(projectDirectory, GradleSourceSet.TEST_FIXTURES),
             mainOutputRoots = outputRoots(projectDirectory, GradleSourceSet.MAIN),
             testOutputRoots = outputRoots(projectDirectory, GradleSourceSet.TEST),
+            testFixturesOutputRoots = outputRoots(projectDirectory, GradleSourceSet.TEST_FIXTURES),
             dependencies = dependencies,
         )
     }
@@ -170,10 +176,7 @@ internal object StaticGradleWorkspaceDiscovery {
     private fun sourceRoots(
         projectDirectory: Path,
         sourceSet: GradleSourceSet,
-    ): List<Path> = listOf(
-        projectDirectory.resolve("src/${sourceSet.id}/kotlin"),
-        projectDirectory.resolve("src/${sourceSet.id}/java"),
-    )
+    ): List<Path> = conventionalGradleSourceRootCandidates(projectDirectory, sourceSet)
         .filter(Path::isDirectory)
         .map(::normalizeStandalonePath)
         .distinct()
@@ -182,12 +185,11 @@ internal object StaticGradleWorkspaceDiscovery {
     private fun outputRoots(
         projectDirectory: Path,
         sourceSet: GradleSourceSet,
-    ): List<Path> = listOf(
-        projectDirectory.resolve("build/classes/${sourceSet.id}"),
-        projectDirectory.resolve("build/classes/java/${sourceSet.id}"),
-        projectDirectory.resolve("build/classes/kotlin/${sourceSet.id}"),
-        projectDirectory.resolve("build/resources/${sourceSet.id}"),
-    ).filter(Path::isDirectory).map(::normalizeStandalonePath).distinct().sorted()
+    ): List<Path> = conventionalGradleOutputRootCandidates(projectDirectory, sourceSet)
+        .filter(Path::isDirectory)
+        .map(::normalizeStandalonePath)
+        .distinct()
+        .sorted()
 
     private fun projectDirectoryFor(
         workspaceRoot: Path,
@@ -206,6 +208,9 @@ internal object StaticGradleWorkspaceDiscovery {
     )
 
     private fun configurationNameToScope(configurationName: String): GradleDependencyScope? = when {
+        configurationName.startsWith("testFixturesCompileOnly", ignoreCase = true) -> GradleDependencyScope.PROVIDED
+        configurationName.startsWith("testFixturesRuntimeOnly", ignoreCase = true) -> GradleDependencyScope.RUNTIME
+        configurationName.startsWith("testFixtures", ignoreCase = true) -> GradleDependencyScope.COMPILE
         configurationName.startsWith("testCompile", ignoreCase = true) -> GradleDependencyScope.TEST
         configurationName.startsWith("testRuntime", ignoreCase = true) -> GradleDependencyScope.TEST
         configurationName.startsWith("test", ignoreCase = true) -> GradleDependencyScope.TEST
@@ -214,4 +219,46 @@ internal object StaticGradleWorkspaceDiscovery {
         configurationName in setOf("implementation", "api", "compile") -> GradleDependencyScope.COMPILE
         else -> null
     }
+}
+
+internal fun conventionalGradleSourceRootCandidates(
+    projectDirectory: Path,
+    sourceSet: GradleSourceSet,
+): List<Path> = when (sourceSet) {
+    GradleSourceSet.MAIN -> listOf(
+        projectDirectory.resolve("src/main/kotlin"),
+        projectDirectory.resolve("src/main/java"),
+    )
+    GradleSourceSet.TEST -> listOf(
+        projectDirectory.resolve("src/test/kotlin"),
+        projectDirectory.resolve("src/test/java"),
+    )
+    GradleSourceSet.TEST_FIXTURES -> listOf(
+        projectDirectory.resolve("src/testFixtures/kotlin"),
+        projectDirectory.resolve("src/testFixtures/java"),
+    )
+}
+
+internal fun conventionalGradleOutputRootCandidates(
+    projectDirectory: Path,
+    sourceSet: GradleSourceSet,
+): List<Path> = when (sourceSet) {
+    GradleSourceSet.MAIN -> listOf(
+        projectDirectory.resolve("build/classes/main"),
+        projectDirectory.resolve("build/classes/java/main"),
+        projectDirectory.resolve("build/classes/kotlin/main"),
+        projectDirectory.resolve("build/resources/main"),
+    )
+    GradleSourceSet.TEST -> listOf(
+        projectDirectory.resolve("build/classes/test"),
+        projectDirectory.resolve("build/classes/java/test"),
+        projectDirectory.resolve("build/classes/kotlin/test"),
+        projectDirectory.resolve("build/resources/test"),
+    )
+    GradleSourceSet.TEST_FIXTURES -> listOf(
+        projectDirectory.resolve("build/classes/testFixtures"),
+        projectDirectory.resolve("build/classes/java/testFixtures"),
+        projectDirectory.resolve("build/classes/kotlin/testFixtures"),
+        projectDirectory.resolve("build/resources/testFixtures"),
+    )
 }

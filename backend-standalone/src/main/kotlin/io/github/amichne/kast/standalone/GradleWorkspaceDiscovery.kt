@@ -166,7 +166,7 @@ internal object GradleWorkspaceDiscovery {
                 availableMainSourceModuleNames = availableMainSourceModuleNames,
                 extraClasspathRoots = normalizedExtraClasspathRoots,
             )
-        }
+        }.mergeDuplicateSourceModules()
 
         return StandaloneWorkspaceLayout(
             sourceModules = sourceModules,
@@ -178,26 +178,53 @@ internal object GradleWorkspaceDiscovery {
         module: IdeaModule,
         pathNormalizer: ToolingApiPathNormalizer,
     ): GradleModuleModel {
+        val projectDirectory = normalizeStandaloneModelPath(module.gradleProject.projectDirectory.toPath())
         val contentRoots = module.contentRoots
-        val mainSourceRoots = pathNormalizer.normalizeExistingSourceRoots(
+        val normalizedMainSourceRoots = pathNormalizer.normalizeExistingSourceRoots(
             contentRoots
-            .asSequence()
-            .flatMap { contentRoot -> contentRoot.sourceDirectories.map { directory -> directory.directory.toPath() } }
+                .asSequence()
+                .flatMap { contentRoot -> contentRoot.sourceDirectories.asSequence().map { directory -> directory.directory.toPath() } },
         )
-        val testSourceRoots = pathNormalizer.normalizeExistingSourceRoots(
+        val normalizedTestSourceRoots = pathNormalizer.normalizeExistingSourceRoots(
             contentRoots
-            .asSequence()
-            .flatMap { contentRoot -> contentRoot.testDirectories.map { directory -> directory.directory.toPath() } }
+                .asSequence()
+                .flatMap { contentRoot -> contentRoot.testDirectories.asSequence().map { directory -> directory.directory.toPath() } },
         )
+        val testFixturesSourceRoots = (
+            normalizedMainSourceRoots.filter { sourceRoot -> sourceRoot.matchesGradleSourceSet(GradleSourceSet.TEST_FIXTURES) } +
+                normalizedTestSourceRoots.filter { sourceRoot -> sourceRoot.matchesGradleSourceSet(GradleSourceSet.TEST_FIXTURES) } +
+                pathNormalizer.normalizeExistingSourceRoots(
+                    conventionalGradleSourceRootCandidates(
+                        projectDirectory = projectDirectory,
+                        sourceSet = GradleSourceSet.TEST_FIXTURES,
+                    ).asSequence().filter(Files::isDirectory),
+                )
+            ).distinct().sorted()
         val dependencies = module.dependencies.mapNotNull(::toGradleDependency)
         val compilerOutput = module.compilerOutput
+        val normalizedOutputDir = compilerOutput.outputDir?.toPath()?.let(::normalizeStandaloneModelPath)
+        val normalizedTestOutputDir = compilerOutput.testOutputDir?.toPath()?.let(::normalizeStandaloneModelPath)
+        val testFixturesOutputRoots = (
+            listOfNotNull(normalizedOutputDir, normalizedTestOutputDir)
+                .filter { outputRoot -> outputRoot.matchesGradleOutputRoot(GradleSourceSet.TEST_FIXTURES) } +
+                conventionalGradleOutputRootCandidates(
+                    projectDirectory = projectDirectory,
+                    sourceSet = GradleSourceSet.TEST_FIXTURES,
+                ).filter(Files::isDirectory).map(::normalizeStandaloneModelPath)
+            ).distinct().sorted()
         return GradleModuleModel(
             gradlePath = module.gradleProject.path,
             ideaModuleName = module.name,
-            mainSourceRoots = mainSourceRoots,
-            testSourceRoots = testSourceRoots,
-            mainOutputRoots = listOfNotNull(compilerOutput.outputDir?.toPath()).map(::normalizeStandaloneModelPath),
-            testOutputRoots = listOfNotNull(compilerOutput.testOutputDir?.toPath()).map(::normalizeStandaloneModelPath),
+            mainSourceRoots = normalizedMainSourceRoots
+                .filterNot { sourceRoot -> sourceRoot.matchesGradleSourceSet(GradleSourceSet.TEST_FIXTURES) },
+            testSourceRoots = normalizedTestSourceRoots
+                .filterNot { sourceRoot -> sourceRoot.matchesGradleSourceSet(GradleSourceSet.TEST_FIXTURES) },
+            testFixturesSourceRoots = testFixturesSourceRoots,
+            mainOutputRoots = listOfNotNull(normalizedOutputDir)
+                .filterNot { outputRoot -> outputRoot.matchesGradleOutputRoot(GradleSourceSet.TEST_FIXTURES) },
+            testOutputRoots = listOfNotNull(normalizedTestOutputDir)
+                .filterNot { outputRoot -> outputRoot.matchesGradleOutputRoot(GradleSourceSet.TEST_FIXTURES) },
+            testFixturesOutputRoots = testFixturesOutputRoots,
             dependencies = dependencies,
         )
     }
@@ -260,7 +287,9 @@ internal fun detectIncompleteClasspath(modules: List<GradleModuleModel>): List<S
         "Gradle workspace discovery did not resolve any dependencies for ${module.gradlePath}; standalone classpath may be incomplete."
     }
 
-private fun GradleModuleModel.hasSourceRoots(): Boolean = mainSourceRoots.isNotEmpty() || testSourceRoots.isNotEmpty()
+private fun GradleModuleModel.hasSourceRoots(): Boolean = mainSourceRoots.isNotEmpty() ||
+    testSourceRoots.isNotEmpty() ||
+    testFixturesSourceRoots.isNotEmpty()
 
 private fun toolingApiFailureWarning(prefix: String, error: Throwable): String {
     val details = error.message?.takeIf(String::isNotBlank) ?: error::class.java.simpleName
@@ -309,10 +338,47 @@ private fun mergeToolingAndStaticModules(
 }
 
 private fun GradleModuleModel.mergeWithStaticModule(staticModule: GradleModuleModel): GradleModuleModel = copy(
+    mainSourceRoots = (mainSourceRoots + staticModule.mainSourceRoots).distinct().sorted(),
+    testSourceRoots = (testSourceRoots + staticModule.testSourceRoots).distinct().sorted(),
+    testFixturesSourceRoots = (testFixturesSourceRoots + staticModule.testFixturesSourceRoots).distinct().sorted(),
     dependencies = (dependencies + staticModule.dependencies).distinct(),
-    mainOutputRoots = mainOutputRoots.ifEmpty { staticModule.mainOutputRoots },
-    testOutputRoots = testOutputRoots.ifEmpty { staticModule.testOutputRoots },
+    mainOutputRoots = (mainOutputRoots + staticModule.mainOutputRoots).distinct().sorted(),
+    testOutputRoots = (testOutputRoots + staticModule.testOutputRoots).distinct().sorted(),
+    testFixturesOutputRoots = (testFixturesOutputRoots + staticModule.testFixturesOutputRoots).distinct().sorted(),
 )
+
+private fun List<StandaloneSourceModuleSpec>.mergeDuplicateSourceModules(): List<StandaloneSourceModuleSpec> {
+    val mergedModules = linkedMapOf<String, StandaloneSourceModuleSpec>()
+    forEach { module ->
+        val existing = mergedModules[module.name]
+        mergedModules[module.name] = if (existing == null) {
+            module
+        } else {
+            StandaloneSourceModuleSpec(
+                name = module.name,
+                sourceRoots = (existing.sourceRoots + module.sourceRoots).distinct().sorted(),
+                binaryRoots = (existing.binaryRoots + module.binaryRoots).distinct().sorted(),
+                dependencyModuleNames = (existing.dependencyModuleNames + module.dependencyModuleNames).distinct(),
+            )
+        }
+    }
+    return mergedModules.values.toList()
+}
+
+private fun Path.matchesGradleSourceSet(sourceSet: GradleSourceSet): Boolean {
+    val normalizedPath = normalizeStandaloneModelPath(this).toString().replace('\\', '/')
+    return normalizedPath.contains("/src/${sourceSet.id}/")
+}
+
+private fun Path.matchesGradleOutputRoot(sourceSet: GradleSourceSet): Boolean {
+    val normalizedPath = normalizeStandaloneModelPath(this).toString().replace('\\', '/')
+    return listOf(
+        "/build/classes/${sourceSet.id}",
+        "/build/classes/java/${sourceSet.id}",
+        "/build/classes/kotlin/${sourceSet.id}",
+        "/build/resources/${sourceSet.id}",
+    ).any(normalizedPath::contains)
+}
 
 
 private fun List<GradleModuleModel>.shouldFallbackToStaticModules(
@@ -334,8 +400,10 @@ internal data class GradleModuleModel(
     val ideaModuleName: String,
     val mainSourceRoots: List<Path>,
     val testSourceRoots: List<Path>,
+    val testFixturesSourceRoots: List<Path> = emptyList(),
     val mainOutputRoots: List<Path>,
     val testOutputRoots: List<Path>,
+    val testFixturesOutputRoots: List<Path> = emptyList(),
     val dependencies: List<GradleDependency>,
 ) {
     private fun analysisModuleName(sourceSet: GradleSourceSet): String = "$gradlePath[${sourceSet.id}]"
@@ -357,6 +425,16 @@ internal data class GradleModuleModel(
                         sourceRoots = sourceRoots,
                         binaryRoots = (resolvedDependencies.mainBinaryRoots + extraClasspathRoots).distinct().sorted(),
                         dependencyModuleNames = resolvedDependencies.mainDependencyNames,
+                    ),
+                )
+            }
+            testFixturesSourceRoots.takeIf(List<Path>::isNotEmpty)?.let { sourceRoots ->
+                add(
+                    StandaloneSourceModuleSpec(
+                        name = analysisModuleName(GradleSourceSet.TEST_FIXTURES),
+                        sourceRoots = sourceRoots,
+                        binaryRoots = (resolvedDependencies.testFixturesBinaryRoots + extraClasspathRoots).distinct().sorted(),
+                        dependencyModuleNames = resolvedDependencies.testFixturesDependencyNames,
                     ),
                 )
             }
@@ -382,14 +460,27 @@ internal data class GradleModuleModel(
         availableMainSourceModuleNames: Set<String>,
     ): ResolvedSourceSetDependencies {
         val mainBinaryRoots = linkedSetOf<Path>()
+        val testFixturesBinaryRoots = linkedSetOf<Path>()
         val testBinaryRoots = linkedSetOf<Path>()
         val mainDependencyNames = linkedSetOf<String>()
+        val testFixturesDependencyNames = linkedSetOf<String>()
         val testDependencyNames = linkedSetOf<String>()
 
         if (mainSourceRoots.isEmpty()) {
+            testFixturesBinaryRoots.addAll(mainOutputRoots)
             testBinaryRoots.addAll(mainOutputRoots)
+        } else {
+            if (testFixturesSourceRoots.isNotEmpty()) {
+                testFixturesDependencyNames.add(analysisModuleName(GradleSourceSet.MAIN))
+            }
+            if (testSourceRoots.isNotEmpty()) {
+                testDependencyNames.add(analysisModuleName(GradleSourceSet.MAIN))
+            }
+        }
+        if (testFixturesSourceRoots.isEmpty()) {
+            testBinaryRoots.addAll(testFixturesOutputRoots)
         } else if (testSourceRoots.isNotEmpty()) {
-            testDependencyNames.add(analysisModuleName(GradleSourceSet.MAIN))
+            testDependencyNames.add(analysisModuleName(GradleSourceSet.TEST_FIXTURES))
         }
 
         dependencies.forEach { dependency ->
@@ -397,6 +488,9 @@ internal data class GradleModuleModel(
                 is GradleDependency.LibraryDependency -> {
                     if (dependency.scope in GradleSourceSet.MAIN.supportedDependencyScopes) {
                         mainBinaryRoots.add(dependency.binaryRoot)
+                    }
+                    if (dependency.scope in GradleSourceSet.TEST_FIXTURES.supportedDependencyScopes) {
+                        testFixturesBinaryRoots.add(dependency.binaryRoot)
                     }
                     if (dependency.scope in GradleSourceSet.TEST.supportedDependencyScopes) {
                         testBinaryRoots.add(dependency.binaryRoot)
@@ -408,6 +502,14 @@ internal data class GradleModuleModel(
                         mainBinaryRoots.addAll(
                             targetModule.addSourceSetDependency(
                                 dependencyNames = mainDependencyNames,
+                                availableMainSourceModuleNames = availableMainSourceModuleNames,
+                            ),
+                        )
+                    }
+                    if (dependency.scope in GradleSourceSet.TEST_FIXTURES.supportedDependencyScopes) {
+                        testFixturesBinaryRoots.addAll(
+                            targetModule.addSourceSetDependency(
+                                dependencyNames = testFixturesDependencyNames,
                                 availableMainSourceModuleNames = availableMainSourceModuleNames,
                             ),
                         )
@@ -426,8 +528,10 @@ internal data class GradleModuleModel(
 
         return ResolvedSourceSetDependencies(
             mainBinaryRoots = mainBinaryRoots.toList(),
+            testFixturesBinaryRoots = testFixturesBinaryRoots.toList(),
             testBinaryRoots = testBinaryRoots.toList(),
             mainDependencyNames = mainDependencyNames.toList(),
+            testFixturesDependencyNames = testFixturesDependencyNames.toList(),
             testDependencyNames = testDependencyNames.toList(),
         )
     }
@@ -447,8 +551,10 @@ internal data class GradleModuleModel(
 
 private data class ResolvedSourceSetDependencies(
     val mainBinaryRoots: List<Path>,
+    val testFixturesBinaryRoots: List<Path>,
     val testBinaryRoots: List<Path>,
     val mainDependencyNames: List<String>,
+    val testFixturesDependencyNames: List<String>,
     val testDependencyNames: List<String>,
 )
 
@@ -472,6 +578,15 @@ internal enum class GradleSourceSet(
 ) {
     MAIN(
         id = "main",
+        supportedDependencyScopes = setOf(
+            GradleDependencyScope.COMPILE,
+            GradleDependencyScope.PROVIDED,
+            GradleDependencyScope.RUNTIME,
+            GradleDependencyScope.UNKNOWN,
+        ),
+    ),
+    TEST_FIXTURES(
+        id = "testFixtures",
         supportedDependencyScopes = setOf(
             GradleDependencyScope.COMPILE,
             GradleDependencyScope.PROVIDED,

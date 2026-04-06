@@ -89,6 +89,63 @@ class StandaloneWorkspaceDiscoveryTest {
     }
 
     @Test
+    fun `static gradle discovery probes testFixtures roots outputs and dependencies`() {
+        createStaticGradleWorkspaceWithTestFixtures()
+
+        val settingsSnapshot = GradleSettingsSnapshot.read(workspaceRoot)
+        val modulesByPath = StaticGradleWorkspaceDiscovery.discoverModules(workspaceRoot, settingsSnapshot)
+            .associateBy(GradleModuleModel::gradlePath)
+
+        assertEquals(
+            setOf(
+                normalizeStandalonePath(workspaceRoot.resolve("app/src/testFixtures/java")),
+                normalizeStandalonePath(workspaceRoot.resolve("app/src/testFixtures/kotlin")),
+            ),
+            modulesByPath.getValue(":app").testFixturesSourceRoots.toSet(),
+        )
+        assertEquals(
+            listOf(normalizeStandalonePath(workspaceRoot.resolve("app/build/classes/kotlin/testFixtures"))),
+            modulesByPath.getValue(":app").testFixturesOutputRoots,
+        )
+        assertTrue(
+            modulesByPath.getValue(":app").dependencies.contains(
+                GradleDependency.ModuleDependency(
+                    targetIdeaModuleName = ":lib",
+                    scope = GradleDependencyScope.COMPILE,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun `gradle workspace discovery discovers testFixtures source module with correct dependencies`() {
+        createGradleWorkspaceWithTestFixtures()
+
+        val layout = discoverStandaloneWorkspaceLayout(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "ignored",
+        )
+
+        val modulesByName = layout.sourceModules.associateBy(StandaloneSourceModuleSpec::name)
+
+        assertEquals(setOf(":lib[main]", ":lib[testFixtures]", ":lib[test]"), modulesByName.keys)
+        assertEquals(
+            listOf(normalizeStandalonePath(workspaceRoot.resolve("lib/src/testFixtures/kotlin"))),
+            modulesByName.getValue(":lib[testFixtures]").sourceRoots,
+        )
+        assertEquals(
+            listOf(":lib[main]"),
+            modulesByName.getValue(":lib[testFixtures]").dependencyModuleNames,
+        )
+        assertEquals(
+            listOf(":lib[main]", ":lib[testFixtures]"),
+            modulesByName.getValue(":lib[test]").dependencyModuleNames,
+        )
+    }
+
+    @Test
     fun `composite gradle workspace respects configured source roots`() {
         createCompositeGradleWorkspace(includeJavaSource = true)
 
@@ -367,6 +424,23 @@ class StandaloneWorkspaceDiscoveryTest {
     }
 
     @Test
+    fun `tooling api resolves compileOnly libraries from included-build convention plugins`() {
+        createCompositeConventionPluginWorkspace()
+
+        val modulesByPath = GradleWorkspaceDiscovery.loadModulesWithToolingApi(workspaceRoot)
+            .associateBy(GradleModuleModel::gradlePath)
+
+        assertTrue(
+            modulesByPath.getValue(":detekt-rules").dependencies
+                .filterIsInstance<GradleDependency.LibraryDependency>()
+                .any { dependency ->
+                    dependency.scope == GradleDependencyScope.PROVIDED &&
+                        dependency.binaryRoot.fileName.toString() == "detekt-api-1.23.7.jar"
+                },
+        )
+    }
+
+    @Test
     fun `runtime status includes workspace diagnostics when classpath is incomplete`(): TestResult = runTest {
         createGradleWorkspace(includeLocalTestJar = false)
 
@@ -461,6 +535,59 @@ class StandaloneWorkspaceDiscoveryTest {
         }
     }
 
+    private fun createGradleWorkspaceWithTestFixtures() {
+        writeFile(
+            relativePath = "settings.gradle.kts",
+            content = """
+                rootProject.name = "workspace"
+                include(":lib")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build.gradle.kts",
+            content = buildString {
+                appendLine("""plugins { idea }""")
+                appendLine("""subprojects {""")
+                appendLine("""    apply(plugin = "java-library")""")
+                appendLine("""    repositories { mavenCentral() }""")
+                appendLine("""}""")
+                appendLine("""project(":lib") {""")
+                appendLine("""    apply(plugin = "java-test-fixtures")""")
+                appendLine("""    configure<org.gradle.api.tasks.SourceSetContainer> {""")
+                appendLine("""        named("main") { java.srcDir("src/main/kotlin") }""")
+                appendLine("""        named("test") { java.srcDir("src/test/kotlin") }""")
+                appendLine("""        named("testFixtures") { java.srcDir("src/testFixtures/kotlin") }""")
+                appendLine("""    }""")
+                appendLine("""}""")
+            },
+        )
+        writeFile(relativePath = "lib/build.gradle.kts", content = "")
+        writeFile(
+            relativePath = "lib/src/main/kotlin/sample/Greeter.kt",
+            content = $$"""
+                package sample
+
+                fun greet(name: String): String = "hi $name"
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "lib/src/testFixtures/kotlin/sample/Fixture.kt",
+            content = """
+                package sample
+
+                fun fixtureGreeting(): String = greet("fixture")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "lib/src/test/kotlin/sample/GreeterTest.kt",
+            content = """
+                package sample
+
+                class GreeterTest
+            """.trimIndent() + "\n",
+        )
+    }
+
     private fun createStaticGradleWorkspace(includeJavaSource: Boolean) {
         writeFile(
             relativePath = "settings.gradle.kts",
@@ -493,6 +620,52 @@ class StandaloneWorkspaceDiscoveryTest {
                 """.trimIndent() + "\n",
             )
         }
+    }
+
+    private fun createStaticGradleWorkspaceWithTestFixtures() {
+        writeFile(
+            relativePath = "settings.gradle.kts",
+            content = """
+                rootProject.name = "workspace"
+                include(":app", ":lib")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "app/build.gradle.kts",
+            content = """
+                dependencies {
+                    testFixturesImplementation(project(":lib"))
+                }
+            """.trimIndent() + "\n",
+        )
+        writeFile(relativePath = "lib/build.gradle.kts", content = "")
+        writeFile(
+            relativePath = "lib/src/main/kotlin/sample/Greeter.kt",
+            content = """
+                package sample
+
+                fun greet(name: String): String = "kast"
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "app/src/testFixtures/kotlin/sample/Fixture.kt",
+            content = """
+                package sample
+
+                fun fixtureGreeting(): String = "fixture"
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "app/src/testFixtures/java/sample/LegacyFixture.java",
+            content = """
+                package sample;
+
+                public final class LegacyFixture {
+                    private LegacyFixture() {}
+                }
+            """.trimIndent() + "\n",
+        )
+        workspaceRoot.resolve("app/build/classes/kotlin/testFixtures").createDirectories()
     }
 
     private fun createCompositeGradleWorkspace(includeJavaSource: Boolean) {
@@ -595,6 +768,117 @@ class StandaloneWorkspaceDiscoveryTest {
         )
     }
 
+    private fun createCompositeConventionPluginWorkspace() {
+        publishMavenArtifact(
+            repositoryRoot = workspaceRoot.resolve("repo"),
+            groupId = "io.gitlab.arturbosch.detekt",
+            artifactId = "detekt-api",
+            version = "1.23.7",
+        )
+        writeFile(
+            relativePath = "settings.gradle.kts",
+            content = """
+                pluginManagement {
+                    includeBuild("build-logic")
+                    repositories {
+                        gradlePluginPortal()
+                        mavenCentral()
+                    }
+                }
+
+                dependencyResolutionManagement {
+                    repositories {
+                        maven { url = uri("repo") }
+                    }
+                }
+
+                rootProject.name = "workspace"
+                include(":detekt-rules")
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build.gradle.kts",
+            content = """
+                plugins { idea }
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "gradle/libs.versions.toml",
+            content = """
+                [versions]
+                detekt = "1.23.7"
+
+                [libraries]
+                detekt-api = { module = "io.gitlab.arturbosch.detekt:detekt-api", version.ref = "detekt" }
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build-logic/settings.gradle.kts",
+            content = """
+                pluginManagement {
+                    repositories {
+                        gradlePluginPortal()
+                        mavenCentral()
+                    }
+                }
+
+                dependencyResolutionManagement {
+                    repositories {
+                        gradlePluginPortal()
+                        mavenCentral()
+                    }
+                }
+
+                rootProject.name = "build-logic"
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build-logic/build.gradle.kts",
+            content = """
+                plugins {
+                    `kotlin-dsl`
+                }
+
+                repositories {
+                    gradlePluginPortal()
+                    mavenCentral()
+                }
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "build-logic/src/main/kotlin/sample.java-library.gradle.kts",
+            content = """
+                plugins {
+                    `java-library`
+                }
+
+                repositories {
+                    mavenCentral()
+                }
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "detekt-rules/build.gradle.kts",
+            content = """
+                plugins {
+                    id("sample.java-library")
+                }
+
+                dependencies {
+                    compileOnly(libs.detekt.api)
+                }
+            """.trimIndent() + "\n",
+        )
+        writeFile(
+            relativePath = "detekt-rules/src/main/java/sample/Rule.java",
+            content = """
+                package sample;
+
+                public final class Rule {}
+            """.trimIndent() + "\n",
+        )
+    }
+
     private fun createJar(path: Path) {
         path.parent.createDirectories()
         Files.newOutputStream(path).use { output ->
@@ -603,6 +887,33 @@ class StandaloneWorkspaceDiscoveryTest {
                 jar.closeEntry()
             }
         }
+    }
+
+    private fun publishMavenArtifact(
+        repositoryRoot: Path,
+        groupId: String,
+        artifactId: String,
+        version: String,
+    ) {
+        val moduleDirectory = repositoryRoot
+            .resolve(groupId.replace('.', '/'))
+            .resolve(artifactId)
+            .resolve(version)
+        createJar(moduleDirectory.resolve("$artifactId-$version.jar"))
+        val pomPath = moduleDirectory.resolve("$artifactId-$version.pom")
+        pomPath.parent.createDirectories()
+        pomPath.writeText(
+            """
+                <project xmlns="http://maven.apache.org/POM/4.0.0"
+                         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+                  <modelVersion>4.0.0</modelVersion>
+                  <groupId>$groupId</groupId>
+                  <artifactId>$artifactId</artifactId>
+                  <version>$version</version>
+                </project>
+            """.trimIndent() + "\n",
+        )
     }
 
     private fun writeFile(
