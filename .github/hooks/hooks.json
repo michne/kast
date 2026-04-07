@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "build-health": {
+      "description": "Run the project's configured Gradle health hook (e.g. 'check' or 'build') and fail if the build is unhealthy.",
+      "command": "bash scripts/gradle/run_gradle_hook.sh .",
+      "required": true
+    },
+    "run-tests": {
+      "description": "Run the full Gradle test task and assert all tests pass.",
+      "command": "bash scripts/gradle/run_task.sh . test",
+      "required": true
+    }
+  }
+}
