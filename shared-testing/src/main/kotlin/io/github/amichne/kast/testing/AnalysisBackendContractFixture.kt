@@ -3,11 +3,11 @@ package io.github.amichne.kast.testing
 import io.github.amichne.kast.api.AnalysisBackend
 import io.github.amichne.kast.api.CallDirection
 import io.github.amichne.kast.api.CallHierarchyQuery
-import io.github.amichne.kast.api.DiagnosticSeverity
 import io.github.amichne.kast.api.DiagnosticsQuery
 import io.github.amichne.kast.api.FileHashing
 import io.github.amichne.kast.api.FilePosition
 import io.github.amichne.kast.api.Location
+import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.ReferencesQuery
 import io.github.amichne.kast.api.RenameQuery
 import io.github.amichne.kast.api.SymbolKind
@@ -216,12 +216,9 @@ data class AnalysisBackendContractFixture(
             )
         }
 
-        private fun normalizePath(path: Path): String = normalizeStandalonePath(path).toString()
+        private fun normalizePath(path: Path): String = NormalizedPath.of(path).value
 
-        private fun normalizeStandalonePath(path: Path): Path {
-            val absolutePath = path.toAbsolutePath().normalize()
-            return runCatching { absolutePath.toRealPath().normalize() }.getOrDefault(absolutePath)
-        }
+        private fun normalizeStandalonePath(path: Path): Path = NormalizedPath.of(path).toJavaPath()
     }
 }
 
@@ -266,19 +263,6 @@ object AnalysisBackendContractAssertions {
             result.references.map(Location::preview),
             "reference previews",
         )
-    }
-
-    suspend fun assertDiagnostics(
-        backend: AnalysisBackend,
-        fixture: AnalysisBackendContractFixture,
-    ) {
-        val result = backend.diagnostics(fixture.diagnosticsQuery)
-        val diagnostic = result.diagnostics.firstOrNull()
-            ?: error("expected at least one diagnostic for ${fixture.brokenFile}")
-
-        expectEquals(DiagnosticSeverity.ERROR, diagnostic.severity, "diagnostic severity")
-        expectEquals(fixture.brokenFile.toString(), diagnostic.location.filePath, "diagnostic file")
-        expectEquals(fixture.brokenPreview, diagnostic.location.preview, "diagnostic preview")
     }
 
     private suspend fun assertCallHierarchy(

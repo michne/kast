@@ -1,6 +1,7 @@
 package io.github.amichne.kast.standalone
 
 import io.github.amichne.kast.api.CallDirection
+import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.CallHierarchyQuery
 import io.github.amichne.kast.api.CallNodeTruncationReason
 import io.github.amichne.kast.api.SCHEMA_VERSION
@@ -293,7 +294,7 @@ class StandaloneAnalysisBackendCallHierarchyTest {
             classpathRoots = emptyList(),
             moduleName = "sources",
         )
-        try {
+        session.use { session ->
             val backend = StandaloneAnalysisBackend(
                 workspaceRoot = workspaceRoot,
                 limits = defaultLimits(),
@@ -301,8 +302,6 @@ class StandaloneAnalysisBackendCallHierarchyTest {
                 telemetry = telemetry,
             )
             block(backend)
-        } finally {
-            session.close()
         }
     }
 
@@ -331,8 +330,5 @@ class StandaloneAnalysisBackendCallHierarchyTest {
         return path
     }
 
-    private fun normalizePath(path: Path): String {
-        val absolutePath = path.toAbsolutePath().normalize()
-        return runCatching { absolutePath.toRealPath().normalize().toString() }.getOrDefault(absolutePath.toString())
-    }
+    private fun normalizePath(path: Path): String = NormalizedPath.of(path).value
 }

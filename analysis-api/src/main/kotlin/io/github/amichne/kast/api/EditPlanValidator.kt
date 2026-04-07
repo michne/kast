@@ -6,7 +6,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
 import java.security.MessageDigest
-import kotlin.io.path.absolute
 import kotlin.io.path.readText
 import kotlin.io.path.writeText
 
@@ -324,14 +323,4 @@ object LocalDiskEditApplier {
     }
 }
 
-private fun canonicalPath(filePath: String): String {
-    val path = Path.of(filePath)
-    if (!path.isAbsolute) {
-        throw ValidationException(
-            message = "File paths must be absolute",
-            details = mapOf("filePath" to filePath),
-        )
-    }
-
-    return path.absolute().normalize().toString()
-}
+private fun canonicalPath(filePath: String): String = NormalizedPath.parse(filePath).value

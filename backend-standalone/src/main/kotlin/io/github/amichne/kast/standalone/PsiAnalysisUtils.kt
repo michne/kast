@@ -9,15 +9,18 @@ import com.intellij.psi.PsiModifier
 import com.intellij.psi.PsiModifierListOwner
 import com.intellij.psi.PsiNameIdentifierOwner
 import com.intellij.psi.PsiNamedElement
+import io.github.amichne.kast.api.FqName
 import io.github.amichne.kast.api.Location
+import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.NotFoundException
+import io.github.amichne.kast.api.PackageName
 import io.github.amichne.kast.api.Symbol
 import io.github.amichne.kast.api.SymbolKind
 import io.github.amichne.kast.api.SymbolVisibility
 import io.github.amichne.kast.api.TextEdit
 import org.jetbrains.kotlin.analysis.api.KaSession
-import org.jetbrains.kotlin.analysis.api.symbols.classSymbol
 import org.jetbrains.kotlin.analysis.api.types.KaClassType
+import org.jetbrains.kotlin.lexer.KtTokens
 import org.jetbrains.kotlin.psi.KtClass
 import org.jetbrains.kotlin.psi.KtClassOrObject
 import org.jetbrains.kotlin.psi.KtDeclarationWithBody
@@ -26,7 +29,17 @@ import org.jetbrains.kotlin.psi.KtNamedFunction
 import org.jetbrains.kotlin.psi.KtObjectDeclaration
 import org.jetbrains.kotlin.psi.KtParameter
 import org.jetbrains.kotlin.psi.KtProperty
-import org.jetbrains.kotlin.lexer.KtTokens
+import java.nio.file.Path
+
+/**
+ * Canonical way to extract a [NormalizedPath] from a PSI element's containing file.
+ * Prefers [com.intellij.psi.PsiFile.getVirtualFile] and falls back to
+ * [com.intellij.psi.FileViewProvider.getVirtualFile] for in-memory files.
+ */
+internal fun PsiElement.resolvedFilePath(): NormalizedPath {
+    val vf = containingFile.virtualFile ?: containingFile.viewProvider.virtualFile
+    return NormalizedPath.of(Path.of(vf.path))
+}
 
 /**
  * Walks the PSI element hierarchy up from [offset] until it finds a resolvable reference
@@ -72,12 +85,14 @@ private fun PsiElement.nameRange(): TextRange = when (this) {
 internal fun PsiElement.declarationEdit(newName: String): TextEdit {
     val range = nameRange()
     return TextEdit(
-        filePath = containingFile.virtualFile.path,
+        filePath = resolvedFilePath().value,
         startOffset = range.startOffset,
         endOffset = range.endOffset,
         newText = newName,
     )
 }
+
+// @Serializable  are going to unwrap the value classes by default, so we can just use the typed value here without needing to manually extract the underlying string.
 
 /**
  * Extracts the effective visibility of a PSI element.
@@ -144,7 +159,7 @@ private fun PsiElement.fqName(): String = when (this) {
  * import-aware filtering in [MutableSourceIdentifierIndex.candidatePathsForFqName]
  * matches correctly against file-level package declarations.
  */
-internal fun PsiElement.targetFqNameAndPackage(): Pair<String, String>? {
+internal fun PsiElement.targetFqNameAndPackage(): Pair<FqName, PackageName>? {
     val fqn: String
     val pkg: String
     when (this) {
@@ -170,7 +185,7 @@ internal fun PsiElement.targetFqNameAndPackage(): Pair<String, String>? {
         }
         else -> return null
     }
-    return fqn to pkg
+    return FqName(fqn) to PackageName(pkg)
 }
 
 private fun PsiElement.kind(): SymbolKind = when (this) {
@@ -206,8 +221,7 @@ internal fun PsiElement.toKastLocation(range: TextRange = nameRange()): Location
     val lineEnd = content.indexOf('\n', startOffset).let { if (it == -1) content.length else it }
 
     return Location(
-        filePath = file.virtualFile?.path
-            ?: file.viewProvider.virtualFile.path,
+        filePath = resolvedFilePath().value,
         startOffset = startOffset,
         endOffset = endOffset,
         startLine = content.subSequence(0, startOffset).count { it == '\n' } + 1,
