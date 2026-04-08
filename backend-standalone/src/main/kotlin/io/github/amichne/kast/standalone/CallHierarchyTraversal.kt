@@ -16,7 +16,6 @@ import io.github.amichne.kast.api.Location
 import io.github.amichne.kast.api.SCHEMA_VERSION
 import io.github.amichne.kast.api.ServerLimits
 import io.github.amichne.kast.api.Symbol
-import io.github.amichne.kast.api.SymbolVisibility
 import kotlinx.serialization.json.Json
 import org.jetbrains.kotlin.psi.KtFile
 import java.nio.file.Path
@@ -33,6 +32,7 @@ internal class CallHierarchyTraversal(
         ignoreUnknownKeys = true
         prettyPrint = false
     }
+    private val candidateFileResolver = CandidateFileResolver(session = session)
 
     fun build(query: CallHierarchyQuery): CallHierarchyResult {
         val file = session.findKtFile(query.position.filePath)
@@ -256,7 +256,7 @@ internal class CallHierarchyTraversal(
     ): List<CallEdge> {
         val edges = mutableListOf<CallEdge>()
 
-        candidateReferenceFiles(target).forEach { candidateFile ->
+        candidateFileResolver.resolve(target).files.forEach { candidateFile ->
             if (budget.timeoutReached()) {
                 return edges
             }
@@ -309,6 +309,9 @@ internal class CallHierarchyTraversal(
                     }
                     element.references.forEach { reference ->
                         val resolved = reference.resolve() ?: return@forEach
+                        if (resolved.containingFile == null) {
+                            return@forEach
+                        }
                         if (!resolved.isWithinWorkspaceRoot(normalizedWorkspaceRoot)) {
                             return@forEach
                         }
@@ -326,88 +329,9 @@ internal class CallHierarchyTraversal(
         return edges
     }
 
-    private fun candidateReferenceFiles(target: PsiElement): List<KtFile> {
-        val visibility = target.visibility()
-
-        if (visibility == SymbolVisibility.PRIVATE || visibility == SymbolVisibility.LOCAL) {
-            val declaringFile = target.containingFile
-            return if (declaringFile is KtFile) listOf(declaringFile) else emptyList()
-        }
-
-        val declaringFile = target.containingFile as? KtFile
-        val anchorFilePath = target.resolvedFilePath().value
-        val searchIdentifier = target.referenceSearchIdentifier()
-                               ?: return candidateReferenceFilesWithoutIdentifier(
-                                   declaringFile = declaringFile,
-                                   visibility = visibility,
-                                   anchorFilePath = anchorFilePath,
-                               )
-
-        val fqNameAndPackage = target.targetFqNameAndPackage()
-        val candidatePaths = if (fqNameAndPackage != null) {
-            val (targetFqName, targetPackage) = fqNameAndPackage
-            session.candidateKotlinFilePathsForFqName(
-                identifier = searchIdentifier,
-                anchorFilePath = anchorFilePath,
-                targetPackage = targetPackage,
-                targetFqName = targetFqName,
-            )
-        } else {
-            session.candidateKotlinFilePaths(
-                identifier = searchIdentifier,
-                anchorFilePath = anchorFilePath,
-            )
-        }
-        if (candidatePaths.isEmpty()) {
-            return listOfNotNull(declaringFile)
-        }
-
-        val normalizedAnchorFilePath = normalizeStandalonePath(Path.of(anchorFilePath)).toString()
-        if (visibility == SymbolVisibility.INTERNAL) {
-            val declaringModuleName = session.sourceModuleNameForFile(normalizedAnchorFilePath)
-            if (declaringModuleName != null) {
-                val friendNames = session.friendModuleNames(declaringModuleName)
-                val moduleFiltered = candidatePaths
-                    .filter { path -> session.sourceModuleNameForFile(path) in friendNames }
-                if (moduleFiltered.isNotEmpty()) {
-                    return moduleFiltered.map(session::findKtFile)
-                }
-            }
-        }
-
-        return candidatePaths.map(session::findKtFile)
-    }
-
-    private fun candidateReferenceFilesWithoutIdentifier(
-        declaringFile: KtFile?,
-        visibility: SymbolVisibility,
-        anchorFilePath: String,
-    ): List<KtFile> {
-        val allFiles = session.allKtFiles()
-        if (allFiles.isEmpty()) {
-            return listOfNotNull(declaringFile)
-        }
-
-        if (visibility == SymbolVisibility.INTERNAL) {
-            val normalizedAnchorFilePath = normalizeStandalonePath(Path.of(anchorFilePath)).toString()
-            val declaringModuleName = session.sourceModuleNameForFile(normalizedAnchorFilePath)
-            if (declaringModuleName != null) {
-                val friendNames = session.friendModuleNames(declaringModuleName)
-                val moduleFiltered = allFiles.filter { candidateFile ->
-                    session.sourceModuleNameForFile(candidateFile.resolvedFilePath().value) in friendNames
-                }
-                if (moduleFiltered.isNotEmpty()) {
-                    return moduleFiltered
-                }
-            }
-        }
-
-        return allFiles
-    }
-
     private fun resolveCache(query: CallHierarchyQuery): CallHierarchyCache? {
         val gitSha = resolveGitSha() ?: return null
-        val cacheDirectory = workspaceRoot.resolve(".kast/call-hierarchy").resolve(gitSha)
+        val cacheDirectory = kastGradleDirectory(workspaceRoot).resolve("call-hierarchy").resolve(gitSha)
         val cacheKey = FileHashing.sha256(
             listOf(
                 SCHEMA_VERSION.toString(),

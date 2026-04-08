@@ -1,5 +1,6 @@
 package io.github.amichne.kast.standalone
 
+import io.github.amichne.kast.api.ModuleName
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -109,6 +110,76 @@ class MutableSourceIdentifierIndexTest {
         )
 
         assertEquals(listOf("/project/src/consumer/WildcardUser.kt"), candidates)
+    }
+
+    @Test
+    fun `candidatePathsForModule filters by allowed module names`() {
+        val index = emptyIndex()
+        index.updateFile(
+            normalizedPath = "/project/src/lib/Library.kt",
+            newContent = """
+                package sample
+
+                fun Target() = "lib"
+            """.trimIndent(),
+            moduleName = ModuleName(":lib[main]"),
+        )
+        index.updateFile(
+            normalizedPath = "/project/src/app/Caller.kt",
+            newContent = """
+                package sample
+
+                fun call() = Target()
+            """.trimIndent(),
+            moduleName = ModuleName(":app[main]"),
+        )
+        index.updateFile(
+            normalizedPath = "/project/src/unrelated/Other.kt",
+            newContent = """
+                package sample
+
+                fun other() = Target()
+            """.trimIndent(),
+            moduleName = ModuleName(":unrelated[main]"),
+        )
+
+        assertEquals(
+            listOf("/project/src/app/Caller.kt"),
+            index.candidatePathsForModule(
+                identifier = "Target",
+                allowedModuleNames = setOf(ModuleName(":app[main]")),
+            ),
+        )
+    }
+
+    @Test
+    fun `candidatePathsForModule falls back when module metadata is incomplete`() {
+        val index = emptyIndex()
+        index.updateFile(
+            normalizedPath = "/project/src/app/Caller.kt",
+            newContent = """
+                package sample
+
+                fun call() = Target()
+            """.trimIndent(),
+            moduleName = ModuleName(":app[main]"),
+        )
+        index.updateFile(
+            normalizedPath = "/project/src/lib/Library.kt",
+            newContent = """
+                package sample
+
+                fun Target() = "lib"
+            """.trimIndent(),
+        )
+
+        assertEquals(
+            listOf("/project/src/app/Caller.kt", "/project/src/lib/Library.kt"),
+            index.candidatePathsForModule(
+                identifier = "Target",
+                allowedModuleNames = setOf(ModuleName(":app[main]")),
+            ),
+        )
     }
 
     @Test

@@ -1,5 +1,6 @@
 package io.github.amichne.kast.standalone
 
+import io.github.amichne.kast.api.ModuleName
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -13,6 +14,14 @@ import kotlin.io.path.writeText
 class SourceIndexCacheTest {
     @TempDir
     lateinit var workspaceRoot: Path
+
+    @Test
+    fun `source index cache lives under gradle cache directory`() {
+        assertEquals(
+            normalizeStandalonePath(workspaceRoot.resolve(".gradle/kast/cache")),
+            kastCacheDirectory(normalizeStandalonePath(workspaceRoot)),
+        )
+    }
 
     @Test
     fun `source index cache round-trips correctly`() {
@@ -83,8 +92,16 @@ class SourceIndexCacheTest {
         )
         val cache = SourceIndexCache(normalizeStandalonePath(workspaceRoot))
         val index = MutableSourceIdentifierIndex.fromCandidatePathsByIdentifier(emptyMap())
-        index.updateFile(normalizeStandalonePath(callerFile).toString(), Files.readString(callerFile))
-        index.updateFile(normalizeStandalonePath(bystanderFile).toString(), Files.readString(bystanderFile))
+        index.updateFile(
+            normalizeStandalonePath(callerFile).toString(),
+            Files.readString(callerFile),
+            moduleName = ModuleName(":consumer[main]"),
+        )
+        index.updateFile(
+            normalizeStandalonePath(bystanderFile).toString(),
+            Files.readString(bystanderFile),
+            moduleName = ModuleName(":other[main]"),
+        )
 
         cache.save(
             index = index,
@@ -98,6 +115,13 @@ class SourceIndexCacheTest {
                 identifier = "Foo",
                 targetPackage = "lib",
                 targetFqName = "lib.Foo",
+            ),
+        )
+        assertEquals(
+            listOf(normalizeStandalonePath(callerFile).toString()),
+            loaded.index.candidatePathsForModule(
+                identifier = "Foo",
+                allowedModuleNames = setOf(ModuleName(":consumer[main]")),
             ),
         )
     }

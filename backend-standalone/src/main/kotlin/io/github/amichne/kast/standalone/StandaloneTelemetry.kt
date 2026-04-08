@@ -171,7 +171,7 @@ internal class StandaloneTelemetry private constructor(
                 ?.let(Path::of)
                 ?.let { path -> if (path.isAbsolute) path else workspaceRoot.resolve(path) }
 
-            return (configuredPath ?: workspaceRoot.resolve(".kast/telemetry/standalone-spans.jsonl"))
+            return (configuredPath ?: kastGradleDirectory(workspaceRoot).resolve("telemetry/standalone-spans.jsonl"))
                 .toAbsolutePath()
                 .normalize()
         }

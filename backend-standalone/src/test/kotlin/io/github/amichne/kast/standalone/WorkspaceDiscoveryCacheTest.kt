@@ -80,7 +80,7 @@ class WorkspaceDiscoveryCacheTest {
 
         listOf(
             ".gradle/caches/settings.gradle.kts",
-            ".kast/cache/build.gradle.kts",
+            ".gradle/kast/cache/build.gradle.kts",
             ".git/hooks/build.gradle",
             ".idea/modules/settings.gradle",
             "app/build/generated/build.gradle.kts",

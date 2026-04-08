@@ -33,6 +33,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantReadWriteLock
@@ -60,6 +61,7 @@ internal class StandaloneAnalysisSession(
     private val ktFileLastModifiedMillisByPath = ConcurrentHashMap<NormalizedPath, Long>()
     private val targetedCandidatePathsByLookupKey = ConcurrentHashMap<CandidateLookupKey, List<String>>()
     private val sourceIdentifierIndex = AtomicReference<MutableSourceIdentifierIndex?>(null)
+    private val sourceModuleNamesByPath = ConcurrentHashMap<NormalizedPath, ModuleName>()
 
     @Volatile
     private var initialSourceIndexReady = CompletableFuture<Unit>()
@@ -319,20 +321,25 @@ internal class StandaloneAnalysisSession(
             return emptyList()
         }
 
-        val anchorSourceModuleName = anchorFilePath?.let { filePath ->
-            sourceModuleNameForFile(normalizePath(Path.of(filePath)).toString())
-        }
+        val anchorSourceModuleName = anchorFilePath?.let { filePath -> sourceModuleNameForFile(NormalizedPath.of(Path.of(filePath))) }
         val lookupKey = CandidateLookupKey(
             identifier = identifier,
             anchorSourceModuleName = anchorSourceModuleName,
         )
 
-        val readyIndex = sourceIdentifierIndex.get()
+        val readyIndex = readySourceIdentifierIndex()
         if (readyIndex != null) {
-            return filterCandidatePathsByAnchorScope(
-                candidatePaths = readyIndex.candidatePathsFor(identifier),
-                anchorSourceModuleName = anchorSourceModuleName,
-            )
+            val allowedSourceModuleNames = anchorSourceModuleName
+                ?.let(dependentModuleNamesBySourceModuleName::get)
+                .takeUnless { it.isNullOrEmpty() }
+            return if (allowedSourceModuleNames == null) {
+                readyIndex.candidatePathsFor(identifier)
+            } else {
+                readyIndex.candidatePathsForModule(
+                    identifier = identifier,
+                    allowedModuleNames = allowedSourceModuleNames,
+                )
+            }
         }
 
         return targetedCandidatePathsByLookupKey.computeIfAbsent(lookupKey) { key ->
@@ -359,21 +366,20 @@ internal class StandaloneAnalysisSession(
             return emptyList()
         }
 
-        val readyIndex = sourceIdentifierIndex.get()
+        val readyIndex = readySourceIdentifierIndex()
         if (readyIndex != null) {
+            val allowedSourceModuleNames = anchorFilePath
+                ?.let { filePath -> sourceModuleNameForFile(NormalizedPath.of(Path.of(filePath))) }
+                ?.let(dependentModuleNamesBySourceModuleName::get)
+                .takeUnless { it.isNullOrEmpty() }
             val enrichedPaths = readyIndex.candidatePathsForFqName(
                 identifier = identifier,
                 targetPackage = targetPackage.value,
                 targetFqName = targetFqName.value,
+                allowedModuleNames = allowedSourceModuleNames,
             )
             if (enrichedPaths.isNotEmpty()) {
-                val anchorSourceModuleName = anchorFilePath?.let { filePath ->
-                    sourceModuleNameForFile(normalizePath(Path.of(filePath)).toString())
-                }
-                return filterCandidatePathsByAnchorScope(
-                    candidatePaths = enrichedPaths,
-                    anchorSourceModuleName = anchorSourceModuleName,
-                )
+                return enrichedPaths
             }
         }
 
@@ -695,27 +701,18 @@ internal class StandaloneAnalysisSession(
     }
 
     private fun buildSourceIdentifierIndex(): MutableSourceIdentifierIndex {
-        val candidatePathsByIdentifier = ConcurrentHashMap<KotlinIdentifier, MutableSet<NormalizedPath>>()
-        val identifiersByPath = ConcurrentHashMap<NormalizedPath, Set<KotlinIdentifier>>()
-
         val index = MutableSourceIdentifierIndex(
-            pathsByIdentifier = candidatePathsByIdentifier,
-            identifiersByPath = identifiersByPath,
+            pathsByIdentifier = ConcurrentHashMap(),
+            identifiersByPath = ConcurrentHashMap(),
         )
 
         allTrackedKotlinSourcePaths().forEach { normalizedFilePath ->
             val normalizedPath = NormalizedPath.ofNormalized(normalizedFilePath)
-            val content = sourceIndexFileReader(Path.of(normalizedFilePath))
-            val identifiers = identifierRegex.findAll(content)
-                .map { match -> KotlinIdentifier(match.value) }
-                .toSet()
-            identifiersByPath[normalizedPath] = identifiers
-            identifiers.forEach { identifier ->
-                candidatePathsByIdentifier
-                    .computeIfAbsent(identifier) { ConcurrentHashMap.newKeySet() }
-                    .add(normalizedPath)
-            }
-            index.extractFileMetadata(normalizedFilePath, content)
+            index.updateFile(
+                normalizedPath = normalizedFilePath,
+                newContent = sourceIndexFileReader(normalizedPath.toJavaPath()),
+                moduleName = sourceModuleNameForFile(normalizedPath),
+            )
         }
 
         return index
@@ -734,11 +731,16 @@ internal class StandaloneAnalysisSession(
     ) {
         val filePath = normalizedPath.toJavaPath()
         if (!Files.isRegularFile(filePath)) {
+            sourceModuleNamesByPath.remove(normalizedPath)
             index.removeFile(normalizedPath.value)
             return
         }
 
-        index.updateFile(normalizedPath.value, sourceIndexFileReader(filePath))
+        index.updateFile(
+            normalizedPath = normalizedPath.value,
+            newContent = sourceIndexFileReader(filePath),
+            moduleName = sourceModuleNameForFile(normalizedPath),
+        )
     }
 
     private fun refreshSourceIdentifierIndex(normalizedPaths: List<NormalizedPath>) {
@@ -759,6 +761,7 @@ internal class StandaloneAnalysisSession(
     ): List<String> = buildList {
         val allowedSourceModuleNames = anchorSourceModuleName
             ?.let(dependentModuleNamesBySourceModuleName::get)
+            .takeUnless { it.isNullOrEmpty() }
 
         sourceModuleSpecs
             .asSequence()
@@ -792,18 +795,24 @@ internal class StandaloneAnalysisSession(
             return candidatePaths
         }
 
-        val allowedSourceModuleNames = dependentModuleNamesBySourceModuleName[anchorSourceModuleName].orEmpty()
+        val allowedSourceModuleNames = dependentModuleNamesBySourceModuleName[anchorSourceModuleName]
+            .takeUnless { it.isNullOrEmpty() }
+            ?: return candidatePaths
         return candidatePaths.filter { candidatePath ->
             sourceModuleNameForFile(candidatePath) in allowedSourceModuleNames
         }
     }
 
-    internal fun sourceModuleNameForFile(normalizedPath: String): ModuleName? {
-        val filePath = Path.of(normalizedPath)
-        return sourceModuleSpecs.firstOrNull { moduleSpec ->
-            moduleSpec.sourceRoots.any(filePath::startsWith)
-        }?.name
-    }
+    internal fun sourceModuleNameForFile(normalizedPath: String): ModuleName? =
+        sourceModuleNameForFile(NormalizedPath.ofNormalized(normalizedPath))
+
+    private fun sourceModuleNameForFile(normalizedPath: NormalizedPath): ModuleName? =
+        sourceModuleNamesByPath[normalizedPath]
+            ?: sourceModuleSpecs.firstOrNull { moduleSpec ->
+                moduleSpec.sourceRoots.any(normalizedPath.toJavaPath()::startsWith)
+            }?.name?.also { moduleName ->
+                sourceModuleNamesByPath[normalizedPath] = moduleName
+            }
 
     /**
      * Returns all source module names that share the same Gradle project as the
@@ -881,6 +890,7 @@ internal class StandaloneAnalysisSession(
         analysisStateGeneration.incrementAndGet()
         sourceModules = rebuiltAnalysisState.sourceModules
         sessionStateDisposable = rebuiltAnalysisState.disposable
+        sourceModuleNamesByPath.clear()
         targetedKtFilesByPath.clear()
         ktFilesByPath.clear()
         ktFileLastModifiedMillisByPath.clear()
@@ -912,6 +922,14 @@ internal class StandaloneAnalysisSession(
             sourceIndexCache.save(index = index, sourceRoots = resolvedSourceRoots)
         }
     }
+
+    private fun readySourceIdentifierIndex(): MutableSourceIdentifierIndex? {
+        sourceIdentifierIndex.get()?.let { return it }
+        runCatching {
+            initialSourceIndexReady.get(10, TimeUnit.SECONDS)
+        }.getOrNull()
+        return sourceIdentifierIndex.get()
+    }
 }
 
 private data class AnalysisState(
@@ -923,12 +941,23 @@ private data class AnalysisState(
 internal class MutableSourceIdentifierIndex(
     private val pathsByIdentifier: ConcurrentHashMap<KotlinIdentifier, MutableSet<NormalizedPath>>,
     private val identifiersByPath: ConcurrentHashMap<NormalizedPath, Set<KotlinIdentifier>>,
+    private val moduleNameByPath: ConcurrentHashMap<NormalizedPath, ModuleName> = ConcurrentHashMap(),
     private val packageByPath: ConcurrentHashMap<NormalizedPath, PackageName> = ConcurrentHashMap(),
     private val importsByPath: ConcurrentHashMap<NormalizedPath, Set<FqName>> = ConcurrentHashMap(),
     private val wildcardImportPackagesByPath: ConcurrentHashMap<NormalizedPath, Set<PackageName>> = ConcurrentHashMap(),
 ) {
     fun candidatePathsFor(identifier: String): List<String> =
         pathsByIdentifier[KotlinIdentifier(identifier)]?.map { it.value }?.sorted().orEmpty()
+
+    fun candidatePathsForModule(
+        identifier: String,
+        allowedModuleNames: Set<ModuleName>,
+    ): List<String> {
+        val rawCandidates = pathsByIdentifier[KotlinIdentifier(identifier)] ?: return emptyList()
+        return filterPathsByAllowedModules(rawCandidates, allowedModuleNames)
+            .map { it.value }
+            .sorted()
+    }
 
     /**
      * Returns file paths that contain [identifier] and are plausibly importing [targetFqName]:
@@ -938,6 +967,7 @@ internal class MutableSourceIdentifierIndex(
         identifier: String,
         targetPackage: String,
         targetFqName: String,
+        allowedModuleNames: Set<ModuleName>? = null,
     ): List<String> {
         val id = KotlinIdentifier(identifier)
         val pkg = PackageName(targetPackage)
@@ -948,6 +978,9 @@ internal class MutableSourceIdentifierIndex(
                 packageByPath[path] == pkg ||
                 importsByPath[path]?.contains(fqn) == true ||
                 wildcardImportPackagesByPath[path]?.contains(pkg) == true
+            }
+            .let { candidates ->
+                allowedModuleNames?.let { moduleNames -> filterPathsByAllowedModules(candidates, moduleNames) } ?: candidates
             }
             .map { it.value }
             .sorted()
@@ -962,6 +995,10 @@ internal class MutableSourceIdentifierIndex(
 
     fun toSerializableMetadata(): SourceIdentifierIndexMetadataSnapshot =
         SourceIdentifierIndexMetadataSnapshot(
+            moduleNameByPath = moduleNameByPath.entries
+                .asSequence()
+                .sortedBy { it.key.value }
+                .associate { (path, moduleName) -> path.value to moduleName.value },
             packageByPath = packageByPath.entries
                 .asSequence()
                 .sortedBy { it.key.value }
@@ -979,18 +1016,20 @@ internal class MutableSourceIdentifierIndex(
     fun updateFile(
         normalizedPath: String,
         newContent: String,
+        moduleName: ModuleName? = null,
     ) {
         val path = NormalizedPath.ofNormalized(normalizedPath)
         replaceIdentifiers(
             normalizedPath = path,
             identifiers = identifierRegex.findAll(newContent).map { match -> KotlinIdentifier(match.value) }.toSet(),
         )
-        extractFileMetadata(path, newContent)
+        extractFileMetadata(path, newContent, moduleName)
     }
 
     fun removeFile(normalizedPath: String) {
         val path = NormalizedPath.ofNormalized(normalizedPath)
         replaceIdentifiers(normalizedPath = path, identifiers = emptySet())
+        moduleNameByPath.remove(path)
         packageByPath.remove(path)
         importsByPath.remove(path)
         wildcardImportPackagesByPath.remove(path)
@@ -1001,14 +1040,21 @@ internal class MutableSourceIdentifierIndex(
     internal fun extractFileMetadata(
         normalizedPath: String,
         content: String,
+        moduleName: ModuleName? = null,
     ) {
-        extractFileMetadata(NormalizedPath.ofNormalized(normalizedPath), content)
+        extractFileMetadata(NormalizedPath.ofNormalized(normalizedPath), content, moduleName)
     }
 
     private fun extractFileMetadata(
         normalizedPath: NormalizedPath,
         content: String,
+        moduleName: ModuleName?,
     ) {
+        if (moduleName != null) {
+            moduleNameByPath[normalizedPath] = moduleName
+        } else {
+            moduleNameByPath.remove(normalizedPath)
+        }
         packageRegex.find(content)?.groupValues?.getOrNull(1)
             ?.let { packageByPath[normalizedPath] = PackageName(it) }
         ?: packageByPath.remove(normalizedPath)
@@ -1054,12 +1100,26 @@ internal class MutableSourceIdentifierIndex(
         }
     }
 
+    private fun filterPathsByAllowedModules(
+        candidates: Collection<NormalizedPath>,
+        allowedModuleNames: Set<ModuleName>,
+    ): Collection<NormalizedPath> {
+        if (candidates.isEmpty()) {
+            return emptyList()
+        }
+        if (candidates.any { path -> moduleNameByPath[path] == null }) {
+            return candidates
+        }
+        return candidates.filter { path -> moduleNameByPath[path] in allowedModuleNames }
+    }
+
     companion object {
         private val packageRegex = Regex("""^package\s+([\w]+(?:\.[\w]+)*)""", RegexOption.MULTILINE)
         private val importRegex = Regex("""^import\s+([\w]+(?:\.[\w]+)*)(\.\*)?""", RegexOption.MULTILINE)
 
         fun fromCandidatePathsByIdentifier(
             candidatePathsByIdentifier: Map<String, List<String>>,
+            moduleNameByPath: Map<String, String> = emptyMap(),
             packageByPath: Map<String, String> = emptyMap(),
             importsByPath: Map<String, List<String>> = emptyMap(),
             wildcardImportPackagesByPath: Map<String, List<String>> = emptyMap(),
@@ -1082,6 +1142,9 @@ internal class MutableSourceIdentifierIndex(
             return MutableSourceIdentifierIndex(
                 pathsByIdentifier = typedPathsByIdentifier,
                 identifiersByPath = typedIdentifiersByPath,
+                moduleNameByPath = moduleNameByPath.entries.associateTo(ConcurrentHashMap()) { (path, moduleName) ->
+                    NormalizedPath.ofNormalized(path) to ModuleName(moduleName)
+                },
                 packageByPath = packageByPath.entries.associateTo(ConcurrentHashMap()) { (path, pkg) ->
                     NormalizedPath.ofNormalized(path) to PackageName(pkg)
                 },
@@ -1097,6 +1160,7 @@ internal class MutableSourceIdentifierIndex(
 }
 
 internal data class SourceIdentifierIndexMetadataSnapshot(
+    val moduleNameByPath: Map<String, String>,
     val packageByPath: Map<String, String>,
     val importsByPath: Map<String, List<String>>,
     val wildcardImportPackagesByPath: Map<String, List<String>>,

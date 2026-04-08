@@ -1,6 +1,7 @@
 package io.github.amichne.kast.standalone
 
 import io.github.amichne.kast.api.FilePosition
+import io.github.amichne.kast.api.ModuleName
 import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.ReadCapability
 import io.github.amichne.kast.api.ReferencesQuery
@@ -190,6 +191,83 @@ class StandaloneAnalysisBackendFindReferencesTest {
             )
 
             assertFalse(session.isFullKtFileMapLoaded())
+        }
+    }
+
+    @Test
+    fun `find references keeps cross-module public callers when dependent map is incomplete`(): TestResult = runTest {
+        val declarationFile = writeFile(
+            relativePath = "lib/src/main/kotlin/sample/Greeter.kt",
+            content = $$"""
+                package sample
+
+                fun greet(name: String): String = "hi $name"
+            """.trimIndent() + "\n",
+        )
+        val callerFile = writeFile(
+            relativePath = "app/src/main/kotlin/sample/Use.kt",
+            content = """
+                package sample
+
+                fun use(): String = greet("kast")
+            """.trimIndent() + "\n",
+        )
+        val queryOffset = Files.readString(declarationFile).indexOf("greet")
+        val libModuleName = ModuleName(":lib[main]")
+        val appModuleName = ModuleName(":app[main]")
+        val phasedDiscoveryResult = PhasedDiscoveryResult(
+            initialLayout = StandaloneWorkspaceLayout(
+                sourceModules = listOf(
+                    StandaloneSourceModuleSpec(
+                        name = libModuleName,
+                        sourceRoots = listOf(normalizeStandalonePath(workspaceRoot.resolve("lib/src/main/kotlin"))),
+                        binaryRoots = emptyList(),
+                        dependencyModuleNames = emptyList(),
+                    ),
+                    StandaloneSourceModuleSpec(
+                        name = appModuleName,
+                        sourceRoots = listOf(normalizeStandalonePath(workspaceRoot.resolve("app/src/main/kotlin"))),
+                        binaryRoots = emptyList(),
+                        dependencyModuleNames = listOf(libModuleName),
+                    ),
+                ),
+                dependentModuleNamesBySourceModuleName = mapOf(
+                    appModuleName to setOf(appModuleName),
+                ),
+            ),
+            enrichmentFuture = null,
+        )
+        val session = StandaloneAnalysisSession(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "ignored",
+            phasedDiscoveryResult = phasedDiscoveryResult,
+        )
+        session.use { session ->
+            session.awaitInitialSourceIndex()
+            val backend = StandaloneAnalysisBackend(
+                workspaceRoot = workspaceRoot,
+                limits = ServerLimits(
+                    maxResults = 100,
+                    requestTimeoutMillis = 30_000,
+                    maxConcurrentRequests = 4,
+                ),
+                session = session,
+            )
+
+            val result = backend.findReferences(
+                ReferencesQuery(
+                    position = FilePosition(
+                        filePath = declarationFile.toString(),
+                        offset = queryOffset,
+                    ),
+                    includeDeclaration = false,
+                ),
+            )
+
+            assertEquals(listOf(normalizePath(callerFile)), result.references.map { reference -> reference.filePath }.distinct())
+            assertEquals(SearchScopeKind.DEPENDENT_MODULES, result.searchScope?.scope)
         }
     }
 

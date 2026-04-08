@@ -7,7 +7,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 
-private const val sourceIndexCacheSchemaVersion = 2
+private const val sourceIndexCacheSchemaVersion = 3
 
 internal class SourceIndexCache(
     workspaceRoot: Path,
@@ -38,6 +38,7 @@ internal class SourceIndexCache(
             indexCachePath,
             SourceIdentifierIndexCachePayload(
                 candidatePathsByIdentifier = index.toSerializableMap(),
+                moduleNameByPath = metadata.moduleNameByPath,
                 packageByPath = metadata.packageByPath,
                 importsByPath = metadata.importsByPath,
                 wildcardImportPackagesByPath = metadata.wildcardImportPackagesByPath,
@@ -53,6 +54,7 @@ internal class SourceIndexCache(
         return IncrementalIndexResult(
             index = MutableSourceIdentifierIndex.fromCandidatePathsByIdentifier(
                 candidatePathsByIdentifier = cachedIndex.candidatePathsByIdentifier,
+                moduleNameByPath = cachedIndex.moduleNameByPath,
                 packageByPath = cachedIndex.packageByPath,
                 importsByPath = cachedIndex.importsByPath,
                 wildcardImportPackagesByPath = cachedIndex.wildcardImportPackagesByPath,
@@ -75,12 +77,15 @@ internal data class IncrementalIndexResult(
 internal data class SourceIdentifierIndexCachePayload(
     val schemaVersion: Int = sourceIndexCacheSchemaVersion,
     val candidatePathsByIdentifier: Map<String, List<String>>,
+    val moduleNameByPath: Map<String, String> = emptyMap(),
     val packageByPath: Map<String, String> = emptyMap(),
     val importsByPath: Map<String, List<String>> = emptyMap(),
     val wildcardImportPackagesByPath: Map<String, List<String>> = emptyMap(),
 )
 
-internal fun kastCacheDirectory(workspaceRoot: Path): Path = workspaceRoot.resolve(".kast").resolve("cache")
+internal fun kastGradleDirectory(workspaceRoot: Path): Path = workspaceRoot.resolve(".gradle").resolve("kast")
+
+internal fun kastCacheDirectory(workspaceRoot: Path): Path = kastGradleDirectory(workspaceRoot).resolve("cache")
 
 internal fun writeCacheFileAtomically(
     path: Path,

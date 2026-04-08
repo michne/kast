@@ -25,14 +25,11 @@ import io.github.amichne.kast.api.RenameQuery
 import io.github.amichne.kast.api.RenameResult
 import io.github.amichne.kast.api.RuntimeState
 import io.github.amichne.kast.api.RuntimeStatusResponse
-import io.github.amichne.kast.api.SearchScope
-import io.github.amichne.kast.api.SearchScopeKind
 import io.github.amichne.kast.api.SemanticInsertionQuery
 import io.github.amichne.kast.api.SemanticInsertionResult
 import io.github.amichne.kast.api.ServerLimits
 import io.github.amichne.kast.api.SymbolQuery
 import io.github.amichne.kast.api.SymbolResult
-import io.github.amichne.kast.api.SymbolVisibility
 import io.github.amichne.kast.api.TextEdit
 import io.github.amichne.kast.api.TypeHierarchyQuery
 import io.github.amichne.kast.api.TypeHierarchyResult
@@ -70,6 +67,7 @@ internal class StandaloneAnalysisBackend internal constructor(
         telemetry = telemetry,
     )
     private val typeHierarchyTraversal = TypeHierarchyTraversal(session = session)
+    private val candidateFileResolver = CandidateFileResolver(session = session)
 
     override suspend fun capabilities(): BackendCapabilities = BackendCapabilities(
         backendName = "standalone",
@@ -148,7 +146,7 @@ internal class StandaloneAnalysisBackend internal constructor(
         session.withReadAccess {
             val file = session.findKtFile(query.position.filePath)
             val target = resolveTarget(file, query.position.offset)
-            val (candidateFiles, searchScope) = candidateReferenceFiles(target)
+            val (candidateFiles, searchScope) = candidateFileResolver.resolve(target)
             val references = candidateFiles
                 .parallelMapFlat { candidateFile -> candidateFile.findReferenceLocations(target) }
                 .sortedWith(compareBy({ it.filePath }, { it.startOffset }))
@@ -221,12 +219,14 @@ internal class StandaloneAnalysisBackend internal constructor(
                     resolveTarget(file, query.position.offset)
                 }
                 val searchIdentifier = target.referenceSearchIdentifier()
-                val (candidateFiles, searchScope) = traceRenamePhase(
+                val candidateSearch = traceRenamePhase(
                     phaseName = "candidateReferenceFiles",
                     attributes = mapOf("kast.rename.identifier" to (searchIdentifier ?: "<fallback>")),
                 ) {
-                    candidateReferenceFiles(target)
+                    candidateFileResolver.resolve(target)
                 }
+                val candidateFiles = candidateSearch.files
+                val searchScope = candidateSearch.scope
                 renameSpan.setAttribute("kast.rename.candidateFileCount", candidateFiles.size)
                 renameSpan.addEvent(
                     name = "candidate-files",
@@ -298,150 +298,6 @@ internal class StandaloneAnalysisBackend internal constructor(
         } else {
             session.refreshFiles(query.filePaths.toSet())
         }
-    }
-
-    private fun candidateReferenceFiles(target: PsiElement): CandidateSearchResult {
-        val visibility = target.visibility()
-
-        if (visibility == SymbolVisibility.PRIVATE || visibility == SymbolVisibility.LOCAL) {
-            val declaringFile = target.containingFile
-            val files = if (declaringFile is KtFile) listOf(declaringFile) else emptyList()
-            return CandidateSearchResult(
-                files = files,
-                scope = SearchScope(
-                    visibility = visibility,
-                    scope = SearchScopeKind.FILE,
-                    exhaustive = true,
-                    candidateFileCount = files.size,
-                    searchedFileCount = files.size,
-                ),
-            )
-        }
-
-        val declaringFile = target.containingFile as? KtFile
-        val anchorFilePath = target.resolvedFilePath().value
-        val searchIdentifier = target.referenceSearchIdentifier() ?: return candidateReferenceFilesWithoutIdentifier(
-            declaringFile = declaringFile,
-            visibility = visibility,
-            anchorFilePath = anchorFilePath,
-        )
-
-        val fqNameAndPackage = target.targetFqNameAndPackage()
-        val candidatePaths = if (fqNameAndPackage != null) {
-            val (targetFqName, targetPackage) = fqNameAndPackage
-            session.candidateKotlinFilePathsForFqName(
-                identifier = searchIdentifier,
-                anchorFilePath = anchorFilePath,
-                targetPackage = targetPackage,
-                targetFqName = targetFqName,
-            )
-        } else {
-            session.candidateKotlinFilePaths(
-                identifier = searchIdentifier,
-                anchorFilePath = anchorFilePath,
-            )
-        }
-        if (candidatePaths.isEmpty()) {
-            val files = listOfNotNull(declaringFile)
-            return CandidateSearchResult(
-                files = files,
-                scope = SearchScope(
-                    visibility = visibility,
-                    scope = SearchScopeKind.FILE,
-                    exhaustive = true,
-                    candidateFileCount = files.size,
-                    searchedFileCount = files.size,
-                ),
-            )
-        }
-
-        if (visibility == SymbolVisibility.INTERNAL) {
-            val declaringModuleName = session.sourceModuleNameForFile(normalizeStandalonePath(Path.of(anchorFilePath)).toString())
-            if (declaringModuleName != null) {
-                val friendNames = session.friendModuleNames(declaringModuleName)
-                val moduleFiltered = candidatePaths
-                    .filter { path -> session.sourceModuleNameForFile(path) in friendNames }
-                if (moduleFiltered.isNotEmpty()) {
-                    return CandidateSearchResult(
-                        files = moduleFiltered.map(session::findKtFile),
-                        scope = SearchScope(
-                            visibility = visibility,
-                            scope = SearchScopeKind.MODULE,
-                            exhaustive = true,
-                            candidateFileCount = candidatePaths.size,
-                            searchedFileCount = moduleFiltered.size,
-                        ),
-                    )
-                }
-            }
-        }
-
-        val capped = candidatePaths.capCandidateFiles(searchIdentifier)
-        return CandidateSearchResult(
-            files = capped.map(session::findKtFile),
-            scope = SearchScope(
-                visibility = visibility,
-                scope = SearchScopeKind.DEPENDENT_MODULES,
-                exhaustive = capped.size == candidatePaths.size,
-                candidateFileCount = candidatePaths.size,
-                searchedFileCount = capped.size,
-            ),
-        )
-    }
-
-    private fun candidateReferenceFilesWithoutIdentifier(
-        declaringFile: KtFile?,
-        visibility: SymbolVisibility,
-        anchorFilePath: String,
-    ): CandidateSearchResult {
-        val allFiles = session.allKtFiles()
-        if (allFiles.isEmpty()) {
-            val files = listOfNotNull(declaringFile)
-            return CandidateSearchResult(
-                files = files,
-                scope = SearchScope(
-                    visibility = visibility,
-                    scope = SearchScopeKind.FILE,
-                    exhaustive = true,
-                    candidateFileCount = files.size,
-                    searchedFileCount = files.size,
-                ),
-            )
-        }
-
-        if (visibility == SymbolVisibility.INTERNAL) {
-            val normalizedAnchorFilePath = normalizeStandalonePath(Path.of(anchorFilePath)).toString()
-            val declaringModuleName = session.sourceModuleNameForFile(normalizedAnchorFilePath)
-            if (declaringModuleName != null) {
-                val friendNames = session.friendModuleNames(declaringModuleName)
-                val moduleFiltered = allFiles.filter { candidateFile ->
-                    session.sourceModuleNameForFile(candidateFile.resolvedFilePath().value) in friendNames
-                }
-                if (moduleFiltered.isNotEmpty()) {
-                    return CandidateSearchResult(
-                        files = moduleFiltered,
-                        scope = SearchScope(
-                            visibility = visibility,
-                            scope = SearchScopeKind.MODULE,
-                            exhaustive = true,
-                            candidateFileCount = allFiles.size,
-                            searchedFileCount = moduleFiltered.size,
-                        ),
-                    )
-                }
-            }
-        }
-
-        return CandidateSearchResult(
-            files = allFiles,
-            scope = SearchScope(
-                visibility = visibility,
-                scope = SearchScopeKind.DEPENDENT_MODULES,
-                exhaustive = true,
-                candidateFileCount = allFiles.size,
-                searchedFileCount = allFiles.size,
-            ),
-        )
     }
 
     private fun KtFile.findReferenceLocations(target: PsiElement): List<io.github.amichne.kast.api.Location> {
@@ -578,22 +434,6 @@ private fun String.identifierOccurrenceOffsets(identifier: String): Sequence<Int
 }
 
 private fun Char.isKastIdentifierPart(): Boolean = this == '_' || isLetterOrDigit()
-
-/** Safety cap for candidate files to prevent pathological searches with common identifiers. */
-private const val MAX_CANDIDATE_FILES = 500
-
-private fun List<String>.capCandidateFiles(identifier: String): List<String> {
-    if (size <= MAX_CANDIDATE_FILES) return this
-    System.err.println(
-        "kast candidate file cap: identifier '$identifier' matched $size files, capping to $MAX_CANDIDATE_FILES",
-    )
-    return take(MAX_CANDIDATE_FILES)
-}
-
-private data class CandidateSearchResult(
-    val files: List<KtFile>,
-    val scope: SearchScope,
-)
 
 /**
  * Parallel `flatMap` over a list using Java parallel streams.

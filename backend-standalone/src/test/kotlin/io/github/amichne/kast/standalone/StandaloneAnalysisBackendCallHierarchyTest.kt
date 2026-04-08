@@ -1,12 +1,18 @@
 package io.github.amichne.kast.standalone
 
+import com.intellij.openapi.util.TextRange
+import com.intellij.psi.PsiElement
+import com.intellij.psi.PsiElementVisitor
+import com.intellij.psi.PsiFile
+import com.intellij.psi.PsiMethod
+import com.intellij.psi.PsiReference
 import io.github.amichne.kast.api.CallDirection
-import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.CallHierarchyQuery
 import io.github.amichne.kast.api.CallNodeTruncationReason
-import io.github.amichne.kast.api.SCHEMA_VERSION
 import io.github.amichne.kast.api.FilePosition
+import io.github.amichne.kast.api.NormalizedPath
 import io.github.amichne.kast.api.ReadCapability
+import io.github.amichne.kast.api.SCHEMA_VERSION
 import io.github.amichne.kast.api.ServerLimits
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -18,6 +24,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import java.lang.reflect.Proxy
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -273,6 +280,7 @@ class StandaloneAnalysisBackendCallHierarchyTest {
             assertFalse(firstPersistence.cacheHit)
             assertTrue(secondPersistence.cacheHit)
             assertTrue(Path.of(firstPersistence.cacheFilePath).exists())
+            assertTrue(firstPersistence.cacheFilePath.contains("/.gradle/kast/call-hierarchy/"))
             val cachePayload = Json.parseToJsonElement(
                 Path.of(firstPersistence.cacheFilePath).readText(),
             ).jsonObject
@@ -281,6 +289,37 @@ class StandaloneAnalysisBackendCallHierarchyTest {
             assertNotNull(cachePayload["stats"]?.jsonObject)
             assertEquals(first.root, second.root)
             assertEquals(first.stats, second.stats)
+        }
+    }
+
+    @Test
+    fun `outgoing hierarchy skips resolved symbols without backing file`() = runTest {
+        val backingFile = writeFile(
+            relativePath = "src/main/kotlin/sample/Anchor.kt",
+            content = """
+                package sample
+
+                fun anchor(): String = "ok"
+            """.trimIndent() + "\n",
+        )
+        val session = StandaloneAnalysisSession(
+            workspaceRoot = workspaceRoot,
+            sourceRoots = emptyList(),
+            classpathRoots = emptyList(),
+            moduleName = "sources",
+        )
+        session.use { currentSession ->
+            val traversal = CallHierarchyTraversal(
+                workspaceRoot = workspaceRoot,
+                limits = defaultLimits(),
+                session = currentSession,
+                telemetry = StandaloneTelemetry.disabled(),
+            )
+            val syntheticDeclaration = syntheticPsiDeclaration(currentSession.findKtFile(backingFile.toString()))
+
+            val edges = invokeOutgoingCallEdges(traversal, syntheticDeclaration)
+
+            assertTrue(edges.isEmpty())
         }
     }
 
@@ -328,6 +367,117 @@ class StandaloneAnalysisBackendCallHierarchyTest {
         Files.createDirectories(path.parent)
         path.writeText(content)
         return path
+    }
+
+    private fun invokeOutgoingCallEdges(
+        traversal: CallHierarchyTraversal,
+        target: PsiElement,
+    ): List<*> {
+        val budgetClass = Class.forName("io.github.amichne.kast.standalone.TraversalBudget")
+        val budgetConstructor = budgetClass.getDeclaredConstructor(
+            Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType,
+            Long::class.javaPrimitiveType,
+        )
+        budgetConstructor.isAccessible = true
+        val budget = budgetConstructor.newInstance(10, 10, 1_000L)
+        val outgoingCallEdges = CallHierarchyTraversal::class.java.getDeclaredMethod(
+            "outgoingCallEdges",
+            PsiElement::class.java,
+            budgetClass,
+        )
+        outgoingCallEdges.isAccessible = true
+        return outgoingCallEdges.invoke(traversal, target, budget) as List<*>
+    }
+
+    private fun syntheticPsiDeclaration(backingFile: PsiFile): PsiMethod {
+        lateinit var declaration: PsiMethod
+        lateinit var child: PsiElement
+        lateinit var reference: PsiReference
+
+        val resolved = psiProxy<PsiMethod> { _, methodName, _ ->
+            when (methodName) {
+                "getContainingFile" -> null
+                "getTextRange" -> TextRange(0, 0)
+                "getText" -> "syntheticResolved"
+                else -> null
+            }
+        }
+
+        child = psiProxy<PsiElement> { proxy, methodName, args ->
+            when (methodName) {
+                "getParent" -> declaration
+                "getContainingFile" -> backingFile
+                "getReferences" -> arrayOf(reference)
+                "getTextRange" -> TextRange(0, 1)
+                "getText" -> "call"
+                "accept" -> {
+                    (args!![0] as PsiElementVisitor).visitElement(proxy as PsiElement)
+                    Unit
+                }
+                "acceptChildren" -> Unit
+                else -> null
+            }
+        }
+
+        reference = psiProxy<PsiReference> { _, methodName, _ ->
+            when (methodName) {
+                "resolve" -> resolved
+                "getElement" -> child
+                "getRangeInElement" -> TextRange(0, 1)
+                "getCanonicalText" -> "synthetic"
+                "isSoft" -> false
+                else -> null
+            }
+        }
+
+        declaration = psiProxy<PsiMethod> { proxy, methodName, args ->
+            when (methodName) {
+                "getParent" -> null
+                "getContainingFile" -> backingFile
+                "getReferences" -> emptyArray<PsiReference>()
+                "getTextRange" -> TextRange(0, 0)
+                "getText" -> "syntheticDeclaration"
+                "accept" -> {
+                    (args!![0] as PsiElementVisitor).visitElement(proxy as PsiElement)
+                    Unit
+                }
+                "acceptChildren" -> {
+                    child.accept(args!![0] as PsiElementVisitor)
+                    Unit
+                }
+                else -> null
+            }
+        }
+
+        return declaration
+    }
+
+    private inline fun <reified T> psiProxy(
+        crossinline handler: (proxy: Any, methodName: String, args: Array<out Any?>?) -> Any?,
+    ): T = Proxy.newProxyInstance(
+        T::class.java.classLoader,
+        arrayOf(T::class.java),
+    ) { proxy, method, args ->
+        when (method.name) {
+            "equals" -> proxy === args?.get(0)
+            "hashCode" -> System.identityHashCode(proxy)
+            "toString" -> "Synthetic${T::class.java.simpleName}"
+            else -> handler(proxy, method.name, args) ?: defaultValue(method.returnType)
+        }
+    } as T
+
+    private fun defaultValue(type: Class<*>): Any? = when {
+        !type.isPrimitive -> null
+        type == Boolean::class.javaPrimitiveType -> false
+        type == Byte::class.javaPrimitiveType -> 0.toByte()
+        type == Short::class.javaPrimitiveType -> 0.toShort()
+        type == Int::class.javaPrimitiveType -> 0
+        type == Long::class.javaPrimitiveType -> 0L
+        type == Float::class.javaPrimitiveType -> 0f
+        type == Double::class.javaPrimitiveType -> 0.0
+        type == Char::class.javaPrimitiveType -> '\u0000'
+        else -> null
     }
 
     private fun normalizePath(path: Path): String = NormalizedPath.of(path).value
