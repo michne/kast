@@ -274,6 +274,24 @@ application {
     mainClass = "io.github.amichne.kast.standalone.StandaloneMainKt"
 }
 
+@Suppress("UNCHECKED_CAST")
+val buildVersion: Provider<String> = extra["buildVersion"] as Provider<String>
+
+val writeBackendVersion by tasks.registering {
+    val versionFile = layout.buildDirectory.file("generated-resources/kast-backend-version.txt")
+    outputs.file(versionFile)
+    doLast {
+        versionFile.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText(buildVersion.get())
+        }
+    }
+}
+
+sourceSets.main {
+    resources.srcDir(writeBackendVersion.map { it.outputs.files.singleFile.parentFile })
+}
+
 dependencies {
     ideaDistribution("com.jetbrains.intellij.idea:ideaIC:$intellijIdeaVersion@zip") {
         isTransitive = false
@@ -294,6 +312,7 @@ dependencies {
     implementation(libs.logback.classic)
     implementation(libs.opentelemetry.api)
     implementation(libs.opentelemetry.sdk)
+    implementation(libs.sqlite.jdbc)
 
     testImplementation(project(":shared-testing"))
     // IJ platform Logger.setFactory() references junit.rules.TestRule at class-init time.

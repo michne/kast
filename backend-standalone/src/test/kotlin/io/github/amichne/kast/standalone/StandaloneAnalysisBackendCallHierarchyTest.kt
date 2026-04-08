@@ -20,6 +20,8 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import io.github.amichne.kast.standalone.hierarchy.CallHierarchyTraversal
+import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetry
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -373,7 +375,7 @@ class StandaloneAnalysisBackendCallHierarchyTest {
         traversal: CallHierarchyTraversal,
         target: PsiElement,
     ): List<*> {
-        val budgetClass = Class.forName("io.github.amichne.kast.standalone.TraversalBudget")
+        val budgetClass = Class.forName("io.github.amichne.kast.standalone.hierarchy.TraversalBudget")
         val budgetConstructor = budgetClass.getDeclaredConstructor(
             Int::class.javaPrimitiveType,
             Int::class.javaPrimitiveType,
@@ -413,7 +415,6 @@ class StandaloneAnalysisBackendCallHierarchyTest {
                 "getText" -> "call"
                 "accept" -> {
                     (args!![0] as PsiElementVisitor).visitElement(proxy as PsiElement)
-                    Unit
                 }
                 "acceptChildren" -> Unit
                 else -> null
@@ -440,11 +441,9 @@ class StandaloneAnalysisBackendCallHierarchyTest {
                 "getText" -> "syntheticDeclaration"
                 "accept" -> {
                     (args!![0] as PsiElementVisitor).visitElement(proxy as PsiElement)
-                    Unit
                 }
                 "acceptChildren" -> {
                     child.accept(args!![0] as PsiElementVisitor)
-                    Unit
                 }
                 else -> null
             }

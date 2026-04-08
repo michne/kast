@@ -15,6 +15,13 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.io.path.createDirectories
 import kotlin.io.path.writeText
+import io.github.amichne.kast.standalone.cache.CacheManager
+import io.github.amichne.kast.standalone.cache.SourceIndexCache
+import io.github.amichne.kast.standalone.cache.WorkspaceDiscoveryCache
+import io.github.amichne.kast.standalone.cache.kastCacheDirectory
+import io.github.amichne.kast.standalone.cache.writeCacheFileAtomically
+import io.github.amichne.kast.standalone.workspace.GradleModuleModel
+import io.github.amichne.kast.standalone.workspace.GradleWorkspaceDiscoveryResult
 
 class CacheManagerTest {
     @TempDir
@@ -108,7 +115,7 @@ class CacheManagerTest {
             session.awaitInitialSourceIndex()
             WorkspaceDiscoveryCache().write(workspaceRoot, workspaceDiscoveryResult())
             val cacheDirectory = kastCacheDirectory(normalizeStandalonePath(workspaceRoot))
-            assertTrue(Files.isRegularFile(cacheDirectory.resolve("source-identifier-index.json")))
+            assertTrue(Files.isRegularFile(cacheDirectory.resolve("source-index.db")))
             assertTrue(Files.isRegularFile(cacheDirectory.resolve("gradle-workspace.json")))
 
             val backend = StandaloneAnalysisBackend(
@@ -123,7 +130,7 @@ class CacheManagerTest {
 
             backend.refresh(RefreshQuery(filePaths = emptyList()))
 
-            assertFalse(Files.exists(cacheDirectory.resolve("source-identifier-index.json")))
+            assertFalse(Files.exists(cacheDirectory.resolve("source-index.db")))
             assertFalse(Files.exists(cacheDirectory.resolve("gradle-workspace.json")))
             assertFalse(Files.exists(cacheDirectory.resolve("file-manifest.json")))
         }

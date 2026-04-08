@@ -1,5 +1,6 @@
-package io.github.amichne.kast.standalone
+package io.github.amichne.kast.standalone.workspace
 
+import io.github.amichne.kast.standalone.normalizeStandalonePath
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.exists
@@ -8,30 +9,30 @@ import kotlin.io.path.isRegularFile
 import kotlin.io.path.readText
 
 internal object StaticGradleWorkspaceDiscovery {
-    private const val supportedDependencyConfigurations =
+    private const val SUPPORTED_DEPENDENCY_CONFIGURATION =
         "api|implementation|compileOnly|runtimeOnly|" +
             "testApi|testImplementation|testCompileOnly|testRuntimeOnly|" +
             "testFixturesApi|testFixturesImplementation|testFixturesCompileOnly|testFixturesRuntimeOnly"
     private val scopedProjectDependencyPattern = Regex(
-        """(?s)\b($supportedDependencyConfigurations)\s*\(\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
+        """(?s)\b($SUPPORTED_DEPENDENCY_CONFIGURATION)\s*\(\s*project\(\s*(?:path\s*=\s*)?["'](:?[^"')]+)["'][^)]*\)\s*\)""",
     )
     private val addedProjectDependencyPattern = Regex(
-        """(?s)\badd\s*\(\s*[\"']($supportedDependencyConfigurations)[\"']\s*,\s*project\(\s*(?:path\s*=\s*)?[\"'](:?[^\"')]+)[\"'][^)]*\)\s*\)""",
+        """(?s)\badd\s*\(\s*["']($SUPPORTED_DEPENDENCY_CONFIGURATION)["']\s*,\s*project\(\s*(?:path\s*=\s*)?["'](:?[^"')]+)["'][^)]*\)\s*\)""",
     )
     private val scopedFileDependencyPattern = Regex(
-        """(?s)\b($supportedDependencyConfigurations)\s*\(\s*files\((.*?)\)\s*\)""",
+        """(?s)\b($SUPPORTED_DEPENDENCY_CONFIGURATION)\s*\(\s*files\((.*?)\)\s*\)""",
     )
     private val addedFileDependencyPattern = Regex(
-        """(?s)\badd\s*\(\s*[\"']($supportedDependencyConfigurations)[\"']\s*,\s*files\((.*?)\)\s*\)""",
+        """(?s)\badd\s*\(\s*["']($SUPPORTED_DEPENDENCY_CONFIGURATION)["']\s*,\s*files\((.*?)\)\s*\)""",
     )
     private val rootProjectFilePattern = Regex(
-        """(?:rootProject\.)?layout\.projectDirectory\.file\(\s*[\"']([^\"']+)[\"']\s*\)""",
+        """(?:rootProject\.)?layout\.projectDirectory\.file\(\s*["']([^"']+)["']\s*\)""",
     )
     private val fileCallPattern = Regex(
         """\bfile\(\s*[\"']([^\"']+) [\"']\s*\)""".replace(" ", ""),
     )
     private val quotedArchivePattern = Regex(
-        """[\"']([^\"']+\.(?:jar|zip))[\"']""",
+        """["']([^"']+\.(?:jar|zip))["']""",
     )
 
     fun discoverModules(

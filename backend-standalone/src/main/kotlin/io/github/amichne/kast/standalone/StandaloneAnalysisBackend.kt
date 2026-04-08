@@ -33,6 +33,23 @@ import io.github.amichne.kast.api.SymbolResult
 import io.github.amichne.kast.api.TextEdit
 import io.github.amichne.kast.api.TypeHierarchyQuery
 import io.github.amichne.kast.api.TypeHierarchyResult
+import io.github.amichne.kast.standalone.analysis.CandidateFileResolver
+import io.github.amichne.kast.standalone.analysis.ImportAnalysis
+import io.github.amichne.kast.standalone.analysis.SemanticInsertionPointResolver
+import io.github.amichne.kast.standalone.analysis.callHierarchyDeclaration
+import io.github.amichne.kast.standalone.analysis.declarationEdit
+import io.github.amichne.kast.standalone.analysis.referenceSearchIdentifier
+import io.github.amichne.kast.standalone.analysis.resolveTarget
+import io.github.amichne.kast.standalone.analysis.resolvedFilePath
+import io.github.amichne.kast.standalone.analysis.supertypeNames
+import io.github.amichne.kast.standalone.analysis.toApiDiagnostics
+import io.github.amichne.kast.standalone.analysis.toKastLocation
+import io.github.amichne.kast.standalone.analysis.toSymbolModel
+import io.github.amichne.kast.standalone.hierarchy.CallHierarchyTraversal
+import io.github.amichne.kast.standalone.hierarchy.TypeHierarchyTraversal
+import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetry
+import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetryScope
+import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetrySpan
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jetbrains.kotlin.analysis.api.KaExperimentalApi
@@ -67,11 +84,11 @@ internal class StandaloneAnalysisBackend internal constructor(
         telemetry = telemetry,
     )
     private val typeHierarchyTraversal = TypeHierarchyTraversal(session = session)
-    private val candidateFileResolver = CandidateFileResolver(session = session)
+    private val candidateFileResolver = CandidateFileResolver(session = session, telemetry = telemetry)
 
     override suspend fun capabilities(): BackendCapabilities = BackendCapabilities(
         backendName = "standalone",
-        backendVersion = "0.1.0",
+        backendVersion = readBackendVersion(),
         workspaceRoot = workspaceRoot.toString(),
         readCapabilities = setOf(
             ReadCapability.RESOLVE_SYMBOL,
@@ -101,6 +118,7 @@ internal class StandaloneAnalysisBackend internal constructor(
         } else {
             "Standalone analysis session is initialized"
         }
+        val moduleGraph = session.dependentModuleGraph
         return RuntimeStatusResponse(
             state = state,
             healthy = true,
@@ -115,6 +133,10 @@ internal class StandaloneAnalysisBackend internal constructor(
                 "$statusMessage with warnings: ${warnings.joinToString(separator = " ")}"
             },
             warnings = warnings,
+            sourceModuleNames = moduleGraph.keys.map { it.value }.sorted(),
+            dependentModuleNamesBySourceModuleName = moduleGraph.entries.associate { (module, dependents) ->
+                module.value to dependents.map { it.value }.sorted()
+            },
         )
     }
 
@@ -129,33 +151,55 @@ internal class StandaloneAnalysisBackend internal constructor(
 
     override suspend fun resolveSymbol(query: SymbolQuery): SymbolResult = withContext(readDispatcher) {
         session.withReadAccess {
-            val file = session.findKtFile(query.position.filePath)
-            val target = resolveTarget(file, query.position.offset)
-            SymbolResult(
-                analyze(file) {
-                    target.toSymbolModel(
-                        containingDeclaration = null,
-                        supertypes = supertypeNames(target),
-                    )
-                }
-            )
+            telemetry.inSpan(
+                scope = StandaloneTelemetryScope.SYMBOL_RESOLVE,
+                name = "kast.resolveSymbol",
+                attributes = mapOf(
+                    "kast.symbolResolve.filePath" to query.position.filePath,
+                    "kast.symbolResolve.offset" to query.position.offset,
+                ),
+            ) {
+                val file = session.findKtFile(query.position.filePath)
+                val target = resolveTarget(file, query.position.offset)
+                SymbolResult(
+                    analyze(file) {
+                        target.toSymbolModel(
+                            containingDeclaration = null,
+                            supertypes = supertypeNames(target),
+                        )
+                    },
+                )
+            }
         }
     }
 
     override suspend fun findReferences(query: ReferencesQuery): ReferencesResult = withContext(readDispatcher) {
         session.withReadAccess {
-            val file = session.findKtFile(query.position.filePath)
-            val target = resolveTarget(file, query.position.offset)
-            val (candidateFiles, searchScope) = candidateFileResolver.resolve(target)
-            val references = candidateFiles
-                .parallelMapFlat { candidateFile -> candidateFile.findReferenceLocations(target) }
-                .sortedWith(compareBy({ it.filePath }, { it.startOffset }))
+            telemetry.inSpan(
+                scope = StandaloneTelemetryScope.REFERENCES,
+                name = "kast.findReferences",
+                attributes = mapOf(
+                    "kast.references.filePath" to query.position.filePath,
+                    "kast.references.offset" to query.position.offset,
+                ),
+            ) { span ->
+                val file = session.findKtFile(query.position.filePath)
+                val target = resolveTarget(file, query.position.offset)
+                val (candidateFiles, searchScope) = candidateFileResolver.resolve(target)
+                span.setAttribute("kast.references.candidateFileCount", candidateFiles.size)
+                span.setAttribute("kast.references.searchScope", searchScope.scope.name)
 
-            ReferencesResult(
-                declaration = if (query.includeDeclaration) analyze(file) { target.toSymbolModel(containingDeclaration = null) } else null,
-                references = references,
-                searchScope = searchScope,
-            )
+                val references = candidateFiles
+                    .parallelMapFlat { candidateFile -> candidateFile.findReferenceLocations(target) }
+                    .sortedWith(compareBy({ it.filePath }, { it.startOffset }))
+                span.setAttribute("kast.references.resultCount", references.size)
+
+                ReferencesResult(
+                    declaration = if (query.includeDeclaration) analyze(file) { target.toSymbolModel(containingDeclaration = null) } else null,
+                    references = references,
+                    searchScope = searchScope,
+                )
+            }
         }
     }
 
@@ -411,29 +455,15 @@ internal class StandaloneAnalysisBackend internal constructor(
         verboseOnly = true,
         block = action,
     )
-}
 
-private fun String.identifierOccurrenceOffsets(identifier: String): Sequence<Int> = sequence {
-    var searchFrom = 0
-    while (true) {
-        val occurrenceOffset = indexOf(identifier, startIndex = searchFrom)
-        if (occurrenceOffset == -1) {
-            break
-        }
-
-        val before = getOrNull(occurrenceOffset - 1)
-        val after = getOrNull(occurrenceOffset + identifier.length)
-        val startsIdentifier = before?.isKastIdentifierPart() != true
-        val endsIdentifier = after?.isKastIdentifierPart() != true
-        if (startsIdentifier && endsIdentifier) {
-            yield(occurrenceOffset)
-        }
-
-        searchFrom = occurrenceOffset + identifier.length
+    companion object {
+        private fun readBackendVersion(): String =
+            StandaloneAnalysisBackend::class.java
+                .getResource("/kast-backend-version.txt")
+                ?.readText()?.trim()
+                ?: "unknown"
     }
 }
-
-private fun Char.isKastIdentifierPart(): Boolean = this == '_' || isLetterOrDigit()
 
 /**
  * Parallel `flatMap` over a list using Java parallel streams.

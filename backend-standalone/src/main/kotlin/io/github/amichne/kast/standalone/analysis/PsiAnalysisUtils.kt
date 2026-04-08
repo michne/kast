@@ -1,4 +1,4 @@
-package io.github.amichne.kast.standalone
+package io.github.amichne.kast.standalone.analysis
 
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiClass
@@ -92,8 +92,6 @@ internal fun PsiElement.declarationEdit(newName: String): TextEdit {
     )
 }
 
-// @Serializable  are going to unwrap the value classes by default, so we can just use the typed value here without needing to manually extract the underlying string.
-
 /**
  * Extracts the effective visibility of a PSI element.
  *
@@ -108,8 +106,8 @@ internal fun PsiElement.declarationEdit(newName: String): TextEdit {
 internal fun PsiElement.visibility(): SymbolVisibility = when (this) {
     is KtNamedDeclaration -> ktVisibility()
     is PsiClass -> javaClassVisibility()
-    is PsiMethod -> javaMemberVisibility()
-    is PsiField -> javaMemberVisibility()
+    is PsiMethod -> javaMemberVisibility(this)
+    is PsiField -> javaMemberVisibility(this)
     else -> SymbolVisibility.UNKNOWN
 }
 
@@ -134,10 +132,10 @@ private fun PsiClass.javaClassVisibility(): SymbolVisibility = when {
     else -> SymbolVisibility.INTERNAL // Java package-private ≈ internal
 }
 
-private fun PsiElement.javaMemberVisibility(): SymbolVisibility = when {
-    this is PsiModifierListOwner && hasModifierProperty(PsiModifier.PRIVATE) -> SymbolVisibility.PRIVATE
-    this is PsiModifierListOwner && hasModifierProperty(PsiModifier.PROTECTED) -> SymbolVisibility.PROTECTED
-    this is PsiModifierListOwner && hasModifierProperty(PsiModifier.PUBLIC) -> SymbolVisibility.PUBLIC
+private fun javaMemberVisibility(element: PsiElement): SymbolVisibility = when (element) {
+    is PsiModifierListOwner if element.hasModifierProperty(PsiModifier.PRIVATE) -> SymbolVisibility.PRIVATE
+    is PsiModifierListOwner if element.hasModifierProperty(PsiModifier.PROTECTED) -> SymbolVisibility.PROTECTED
+    is PsiModifierListOwner if element.hasModifierProperty(PsiModifier.PUBLIC) -> SymbolVisibility.PUBLIC
     else -> SymbolVisibility.INTERNAL // Java package-private ≈ internal
 }
 
