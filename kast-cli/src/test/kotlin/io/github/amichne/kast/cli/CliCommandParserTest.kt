@@ -2,6 +2,7 @@ package io.github.amichne.kast.cli
 
 import io.github.amichne.kast.api.RefreshQuery
 import io.github.amichne.kast.api.SemanticInsertionTarget
+import io.github.amichne.kast.api.SymbolKind
 import io.github.amichne.kast.api.TypeHierarchyDirection
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
@@ -56,8 +57,7 @@ class CliCommandParserTest {
     fun `call hierarchy parses from inline options`() {
         val command = parser.parse(
             arrayOf(
-                "call",
-                "hierarchy",
+                "call-hierarchy",
                 "--workspace-root=$tempDir",
                 "--file-path=$tempDir/Sample.kt",
                 "--offset=12",
@@ -124,7 +124,6 @@ class CliCommandParserTest {
     fun `symbol resolve parses no auto start`() {
         val command = parser.parse(
             arrayOf(
-                "symbol",
                 "resolve",
                 "--workspace-root=$tempDir",
                 "--file-path=$tempDir/Sample.kt",
@@ -142,8 +141,7 @@ class CliCommandParserTest {
     fun `type hierarchy parses from inline options`() {
         val command = parser.parse(
             arrayOf(
-                "type",
-                "hierarchy",
+                "type-hierarchy",
                 "--workspace-root=$tempDir",
                 "--file-path=$tempDir/Types.kt",
                 "--offset=18",
@@ -165,7 +163,6 @@ class CliCommandParserTest {
     fun `semantic insertion point parses from inline options`() {
         val command = parser.parse(
             arrayOf(
-                "semantic",
                 "insertion-point",
                 "--workspace-root=$tempDir",
                 "--file-path=$tempDir/Types.kt",
@@ -184,8 +181,7 @@ class CliCommandParserTest {
     fun `imports optimize parses from inline options`() {
         val command = parser.parse(
             arrayOf(
-                "imports",
-                "optimize",
+                "optimize-imports",
                 "--workspace-root=$tempDir",
                 "--file-paths=$tempDir/A.kt,$tempDir/B.kt",
             ),
@@ -347,19 +343,118 @@ class CliCommandParserTest {
     }
 
     @Test
-    fun `usage errors include command specific help`() {
+    fun `workspace stop parses from workspace root`() {
+        val command = parser.parse(
+            arrayOf(
+                "workspace",
+                "stop",
+                "--workspace-root=$tempDir",
+            ),
+        )
+
+        assertTrue(command is CliCommand.WorkspaceStop)
+        val stopCommand = command as CliCommand.WorkspaceStop
+        assertEquals(tempDir, stopCommand.options.workspaceRoot)
+    }
+
+    @Test
+    fun `daemon start is unknown`() {
         val failure = assertThrows<CliFailure> {
             parser.parse(
                 arrayOf(
-                    "edits",
-                    "apply",
+                    "daemon",
+                    "start",
                     "--workspace-root=$tempDir",
                 ),
             )
         }
 
         assertEquals("CLI_USAGE", failure.code)
-        assertTrue(checkNotNull(failure.details["usage"]).contains("edits apply"))
-        assertTrue(checkNotNull(failure.details["help"]).contains("help edits apply"))
+    }
+
+    @Test
+    fun `daemon stop is unknown`() {
+        val failure = assertThrows<CliFailure> {
+            parser.parse(
+                arrayOf(
+                    "daemon",
+                    "stop",
+                    "--workspace-root=$tempDir",
+                ),
+            )
+        }
+
+        assertEquals("CLI_USAGE", failure.code)
+    }
+
+    @Test
+    fun `usage errors include command specific help`() {
+        val failure = assertThrows<CliFailure> {
+            parser.parse(
+                arrayOf(
+                    "apply-edits",
+                    "--workspace-root=$tempDir",
+                ),
+            )
+        }
+
+        assertEquals("CLI_USAGE", failure.code)
+        assertTrue(checkNotNull(failure.details["usage"]).contains("apply-edits"))
+        assertTrue(checkNotNull(failure.details["help"]).contains("help apply-edits"))
+    }
+
+    @Test
+    fun `file outline parses from inline options`() {
+        val command = parser.parse(
+            arrayOf(
+                "outline",
+                "--workspace-root=$tempDir",
+                "--file-path=$tempDir/Sample.kt",
+            ),
+        )
+
+        assertTrue(command is CliCommand.FileOutline)
+        val outlineCommand = command as CliCommand.FileOutline
+        assertEquals(tempDir, outlineCommand.options.workspaceRoot)
+        assertEquals(tempDir.resolve("Sample.kt").toString(), outlineCommand.query.filePath)
+    }
+
+    @Test
+    fun `workspace symbol parses from inline options`() {
+        val command = parser.parse(
+            arrayOf(
+                "workspace-symbol",
+                "--workspace-root=$tempDir",
+                "--pattern=MyClass",
+            ),
+        )
+
+        assertTrue(command is CliCommand.WorkspaceSymbol)
+        val symbolCommand = command as CliCommand.WorkspaceSymbol
+        assertEquals(tempDir, symbolCommand.options.workspaceRoot)
+        assertEquals("MyClass", symbolCommand.query.pattern)
+        assertEquals(false, symbolCommand.query.regex)
+        assertEquals(100, symbolCommand.query.maxResults)
+    }
+
+    @Test
+    fun `workspace symbol parses regex and kind options`() {
+        val command = parser.parse(
+            arrayOf(
+                "workspace-symbol",
+                "--workspace-root=$tempDir",
+                "--pattern=.*Service",
+                "--regex=true",
+                "--kind=CLASS",
+                "--max-results=50",
+            ),
+        )
+
+        assertTrue(command is CliCommand.WorkspaceSymbol)
+        val symbolCommand = command as CliCommand.WorkspaceSymbol
+        assertEquals(".*Service", symbolCommand.query.pattern)
+        assertEquals(true, symbolCommand.query.regex)
+        assertEquals(SymbolKind.CLASS, symbolCommand.query.kind)
+        assertEquals(50, symbolCommand.query.maxResults)
     }
 }

@@ -4,6 +4,7 @@ import io.github.amichne.kast.api.ApplyEditsQuery
 import io.github.amichne.kast.api.CallDirection
 import io.github.amichne.kast.api.CallHierarchyQuery
 import io.github.amichne.kast.api.DiagnosticsQuery
+import io.github.amichne.kast.api.FileOutlineQuery
 import io.github.amichne.kast.api.FilePosition
 import io.github.amichne.kast.api.ImportOptimizeQuery
 import io.github.amichne.kast.api.ReferencesQuery
@@ -12,9 +13,11 @@ import io.github.amichne.kast.api.RenameQuery
 import io.github.amichne.kast.api.SemanticInsertionQuery
 import io.github.amichne.kast.api.SemanticInsertionTarget
 import io.github.amichne.kast.api.StandaloneServerOptions
+import io.github.amichne.kast.api.SymbolKind
 import io.github.amichne.kast.api.SymbolQuery
 import io.github.amichne.kast.api.TypeHierarchyDirection
 import io.github.amichne.kast.api.TypeHierarchyQuery
+import io.github.amichne.kast.api.WorkspaceSymbolQuery
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
@@ -76,29 +79,30 @@ internal class CliCommandParser(
                 listOf("workspace", "status") -> CliCommand.WorkspaceStatus(parsed.runtimeOptions())
                 listOf("workspace", "ensure") -> CliCommand.WorkspaceEnsure(parsed.runtimeOptions())
                 listOf("workspace", "refresh") -> CliCommand.WorkspaceRefresh(parsed.runtimeOptions(), parsed.refreshQuery(json))
-                listOf("daemon", "start") -> CliCommand.DaemonStart(parsed.runtimeOptions(backendName = "standalone"))
-                listOf("daemon", "stop") -> CliCommand.DaemonStop(parsed.runtimeOptions(backendName = "standalone"))
+                listOf("workspace", "stop") -> CliCommand.WorkspaceStop(parsed.runtimeOptions())
                 listOf("completion", "bash") -> CliCommand.Completion(CliCompletionShell.BASH)
                 listOf("completion", "zsh") -> CliCommand.Completion(CliCompletionShell.ZSH)
                 listOf("capabilities") -> CliCommand.Capabilities(parsed.runtimeOptions())
-                listOf("symbol", "resolve") -> CliCommand.ResolveSymbol(parsed.runtimeOptions(), parsed.symbolQuery(json))
+                listOf("resolve") -> CliCommand.ResolveSymbol(parsed.runtimeOptions(), parsed.symbolQuery(json))
                 listOf("references") -> CliCommand.FindReferences(parsed.runtimeOptions(), parsed.referencesQuery(json))
-                listOf("call", "hierarchy") -> CliCommand.CallHierarchy(parsed.runtimeOptions(), parsed.callHierarchyQuery(json))
-                listOf("type", "hierarchy") -> CliCommand.TypeHierarchy(
+                listOf("call-hierarchy") -> CliCommand.CallHierarchy(parsed.runtimeOptions(), parsed.callHierarchyQuery(json))
+                listOf("type-hierarchy") -> CliCommand.TypeHierarchy(
                     parsed.withoutOption("max-results").runtimeOptions(),
                     parsed.typeHierarchyQuery(json),
                 )
-                listOf("semantic", "insertion-point") -> CliCommand.SemanticInsertionPoint(
+                listOf("insertion-point") -> CliCommand.SemanticInsertionPoint(
                     parsed.runtimeOptions(),
                     parsed.semanticInsertionQuery(json),
                 )
                 listOf("diagnostics") -> CliCommand.Diagnostics(parsed.runtimeOptions(), parsed.diagnosticsQuery(json))
+                listOf("outline") -> CliCommand.FileOutline(parsed.runtimeOptions(), parsed.fileOutlineQuery(json))
+            listOf("workspace-symbol") -> CliCommand.WorkspaceSymbol(parsed.withoutOption("max-results").runtimeOptions(), parsed.workspaceSymbolQuery(json))
                 listOf("rename") -> CliCommand.Rename(parsed.runtimeOptions(), parsed.renameQuery(json))
-                listOf("imports", "optimize") -> CliCommand.ImportOptimize(
+                listOf("optimize-imports") -> CliCommand.ImportOptimize(
                     parsed.runtimeOptions(),
                     parsed.importOptimizeQuery(json),
                 )
-                listOf("edits", "apply") -> CliCommand.ApplyEdits(parsed.runtimeOptions(), parsed.applyEditsQuery(json))
+                listOf("apply-edits") -> CliCommand.ApplyEdits(parsed.runtimeOptions(), parsed.applyEditsQuery(json))
                 listOf("install") -> CliCommand.Install(parsed.installOptions())
                 listOf("install", "skill") -> CliCommand.InstallSkill(parsed.installSkillOptions())
                 listOf("smoke") -> CliCommand.Smoke(parsed.smokeOptions())
@@ -305,7 +309,7 @@ internal data class ParsedArguments(
     ) {
         throw CliFailure(
             code = "CLI_USAGE",
-            message = "`edits apply` requires --request-file=/absolute/path/to/query.json",
+            message = "`apply-edits` requires --request-file=/absolute/path/to/query.json",
         )
     }
 
@@ -335,6 +339,35 @@ internal data class ParsedArguments(
                 ?.filter(String::isNotEmpty)
                 ?.map(::absoluteFilePath)
                 .orEmpty(),
+        )
+    }
+
+    fun fileOutlineQuery(json: Json): FileOutlineQuery = requestOrFile(
+        serializer = FileOutlineQuery.serializer(),
+        requestFileKey = "request-file",
+        json = json,
+    ) {
+        FileOutlineQuery(
+            filePath = absoluteFilePath(requireOption("file-path")),
+        )
+    }
+
+    fun workspaceSymbolQuery(json: Json): WorkspaceSymbolQuery = requestOrFile(
+        serializer = WorkspaceSymbolQuery.serializer(),
+        requestFileKey = "request-file",
+        json = json,
+    ) {
+        WorkspaceSymbolQuery(
+            pattern = requireOption("pattern"),
+            kind = options["kind"]?.let { raw ->
+                SymbolKind.entries.firstOrNull { it.name.equals(raw, ignoreCase = true) }
+                    ?: throw CliFailure(
+                        code = "CLI_USAGE",
+                        message = "Unknown symbol kind: $raw. Valid values: ${SymbolKind.entries.joinToString { it.name }}",
+                    )
+            },
+            maxResults = optionalInt("max-results", 100),
+            regex = optionalBoolean("regex", false),
         )
     }
 

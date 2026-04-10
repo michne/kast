@@ -12,9 +12,16 @@ property on `RetryConfig`." The skill can bridge that request into the
 precise lookup inputs that Kast needs.
 
 !!! note
-    The packaged skill can run `call hierarchy` after it has a confirmed symbol
+    The packaged skill can run `call-hierarchy` after it has a confirmed symbol
     position. Ask it to resolve the symbol first, then request incoming or
     outgoing callers.
+
+!!! tip
+    When the packaged skill searches for declaration candidates, it uses
+    text-based search by default. If your agent calls the CLI directly, you
+    can also use `workspace-symbol --pattern=ClassName` to find declarations
+    by name without text search. This is especially useful when a name is
+    common or when you want to filter by symbol kind.
 
 ## Install the packaged skill into the workspace
 
@@ -82,7 +89,7 @@ sequenceDiagram
     User->>Agent: "Find references to HealthCheckService"
     Agent->>Skill: Search workspace for declaration
     Skill-->>Skill: Search candidate files + compute offset
-    Skill->>Daemon: symbol resolve (file, offset)
+    Skill->>Daemon: resolve (file, offset)
     Daemon-->>Skill: symbol identity (fqName, kind, location)
     Skill-->>Agent: Confirm: io.example.HealthCheckService
     Agent->>Skill: Find references for confirmed symbol
@@ -112,8 +119,10 @@ you.
 - Ensure the workspace daemon is ready before running analysis.
 - Search for likely declaration sites from the human reference you gave it.
 - Translate the selected declaration into the file and offset that Kast needs.
-- Verify the target with `symbol resolve` before it expands into
-  `references`, `call hierarchy`, `rename`, or other follow-up commands.
+- Verify the target with `resolve` before it expands into
+  `references`, `call-hierarchy`, `rename`, or other follow-up commands.
+- Use `outline` to inspect the declarations in a file before choosing a target
+  offset.
 
 ## Add context only when the name is ambiguous
 
@@ -155,6 +164,26 @@ lookup, or forcing a specific CLI invocation, use the advanced reference page
 instead of putting those details on the main path.
 
 - [LLM scaffolding reference](llm-scaffolding-reference.md)
+
+## Use workspace-symbol as an alternative bridge
+
+When you call the CLI directly instead of going through the packaged skill,
+`workspace-symbol` gives you a semantic alternative to text search for locating
+declarations.
+
+```bash
+kast \
+  workspace-symbol \
+  --workspace-root=/absolute/path/to/workspace \
+  --pattern=HealthCheckService
+```
+
+This returns matching symbol entries with their file paths, offsets, and kind
+metadata. You can then feed a match directly into `resolve`, `references`, or
+`call-hierarchy` without the intermediate text-search step.
+
+Add `--kind=CLASS` to narrow results when the name is common, or
+`--regex=true` when you need pattern-based matching.
 
 ## Next steps
 

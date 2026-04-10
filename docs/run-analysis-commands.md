@@ -42,12 +42,14 @@ you want to save it for repeatable automation.
 
 | Command | Inline input | Request file input | Notes |
 | --- | --- | --- | --- |
-| `symbol resolve` | `--file-path` and `--offset` | `--request-file` | Use the inline form for a single lookup |
+| `resolve` | `--file-path` and `--offset` | `--request-file` | Use the inline form for a single lookup |
 | `references` | `--file-path`, `--offset`, and optional `--include-declaration=true` | `--request-file` | Keep `--include-declaration` off unless you need the declaration in the result |
-| `call hierarchy` | `--file-path`, `--offset`, `--direction`, and optional bound flags | `--request-file` | Use inline input when you want to tune depth or truncation limits directly |
+| `call-hierarchy` | `--file-path`, `--offset`, `--direction`, and optional bound flags | `--request-file` | Use inline input when you want to tune depth or truncation limits directly |
 | `diagnostics` | `--file-paths=/absolute/A.kt,/absolute/B.kt` | `--request-file` | Inline input is easiest for a small list of files |
+| `outline` | `--file-path` | Not supported | Use the inline form for a single file |
+| `workspace-symbol` | `--pattern`, optional `--regex`, `--kind`, `--max-results` | Not supported | Use the inline form for name-based search |
 | `rename` | `--file-path`, `--offset`, `--new-name`, and optional `--dry-run=true` | `--request-file` | Rename stays in planning mode unless you change `dryRun` in the query |
-| `edits apply` | Not supported | `--request-file` | The request file must include edits plus expected file hashes |
+| `apply-edits` | Not supported | `--request-file` | The request file must include edits plus expected file hashes |
 
 ## Check capabilities before you rely on a feature
 
@@ -66,12 +68,12 @@ runtime supports it.
 
 ## Resolve a symbol
 
-Use `symbol resolve` when you know a file position and want the symbol details
+Use `resolve` when you know a file position and want the symbol details
 at that exact offset.
 
 ```bash
 kast \
-  symbol resolve \
+  resolve \
   --workspace-root=/absolute/path/to/workspace \
   --file-path=/absolute/path/to/src/main/kotlin/com/example/App.kt \
   --offset=123
@@ -107,12 +109,12 @@ miss usages outside the searched scope.
 
 ## Expand a call hierarchy
 
-Use `call hierarchy` when you want incoming callers or outgoing callees for the
+Use `call-hierarchy` when you want incoming callers or outgoing callees for the
 declaration at a specific file position.
 
 ```bash
 kast \
-  call hierarchy \
+  call-hierarchy \
   --workspace-root=/absolute/path/to/workspace \
   --file-path=/absolute/path/to/src/main/kotlin/com/example/App.kt \
   --offset=123 \
@@ -142,6 +144,51 @@ kast \
 Move to `--request-file` when you want the calling side to control the payload
 shape directly.
 
+## Get a file outline
+
+Use `outline` when you want a hierarchical view of the named declarations in a
+Kotlin file.
+
+```bash
+kast \
+  outline \
+  --workspace-root=/absolute/path/to/workspace \
+  --file-path=/absolute/path/to/src/main/kotlin/com/example/App.kt
+```
+
+The result is a nested tree. Top-level classes contain their member functions
+and properties as children. The outline includes classes, objects, named
+functions, and named properties. It excludes parameters, anonymous elements,
+and local declarations.
+
+## Search for symbols by name
+
+Use `workspace-symbol` when you want to find declarations across the workspace
+by name instead of by file position.
+
+```bash
+kast \
+  workspace-symbol \
+  --workspace-root=/absolute/path/to/workspace \
+  --pattern=HealthCheck
+```
+
+The default match is a case-insensitive substring search. Add `--regex=true`
+when you need pattern-based matching. Filter by kind with `--kind=CLASS`,
+`--kind=FUNCTION`, or `--kind=PROPERTY`.
+
+```bash
+kast \
+  workspace-symbol \
+  --workspace-root=/absolute/path/to/workspace \
+  --pattern=Service$ \
+  --regex=true \
+  --kind=CLASS
+```
+
+Read `page.truncated` in the result before you treat the list as complete.
+The default limit is 100 results.
+
 ## Plan a rename
 
 Use `rename` when you want an edit plan for a symbol rename. The inline form is
@@ -161,12 +208,12 @@ planning mode unless your request payload says otherwise.
 
 ## Apply a prepared edit plan
 
-Use `edits apply` only after you already have a prepared edit plan that
+Use `apply-edits` only after you already have a prepared edit plan that
 includes the edits and expected file hashes.
 
 ```bash
 kast \
-  edits apply \
+  apply-edits \
   --workspace-root=/absolute/path/to/workspace \
   --request-file=/absolute/path/to/query.json
 ```
@@ -176,7 +223,7 @@ request from a file.
 
 ## Refresh workspace state manually
 
-Kast refreshes `edits apply` results immediately and watches source roots for
+Kast refreshes `apply-edits` results immediately and watches source roots for
 most external `.kt` file changes. Use `workspace refresh` when you need the
 manual recovery path.
 
@@ -202,9 +249,13 @@ manual recovery path.
 
 ## Understand bounded results
 
-`call hierarchy` is part of the supported CLI, but it is intentionally bounded.
-When you summarize results, report the direction you used and surface
-truncation honestly if `stats` or node metadata show that Kast hit a limit.
+`call-hierarchy`, `outline`, and `workspace-symbol` are part of the supported
+CLI, but each is intentionally bounded. When you summarize `call-hierarchy`
+results, report the direction you used and surface truncation honestly if
+`stats` or node metadata show that Kast hit a limit. `outline` covers named
+declarations but excludes parameters, anonymous elements, and local
+declarations. `workspace-symbol` defaults to 100 results; read
+`page.truncated` before treating the list as complete.
 
 ## Next steps
 
