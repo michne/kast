@@ -62,7 +62,23 @@ done
 
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/kast-installer-smoke.XXXXXX")"
 platform_id="$(detect_platform_id)"
-asset_name="kast-smoke-${platform_id}.zip"
+
+# Detect whether the portable distribution includes a native binary.
+# CI builds with -PjvmOnly (Temurin, no GraalVM) so the native binary is absent.
+# Release builds with GraalVM include bin/kast.
+has_native="false"
+if unzip -l "$portable_zip" 2>/dev/null | grep -q '/bin/kast$'; then
+  has_native="true"
+fi
+
+installer_flags="--non-interactive"
+if [[ "$has_native" != "true" ]]; then
+  asset_name="kast-smoke-${platform_id}-jvm.zip"
+  installer_flags="--jvm-only --non-interactive"
+else
+  asset_name="kast-smoke-${platform_id}.zip"
+fi
+
 asset_path="${tmp_dir}/${asset_name}"
 metadata_path="${tmp_dir}/release.json"
 metadata_url="$(
@@ -114,7 +130,7 @@ KAST_INSTALL_ROOT="${tmp_dir}/install-root" \
 KAST_BIN_DIR="${tmp_dir}/bin" \
 KAST_SKIP_PATH_UPDATE=true \
 KAST_INSTALL_COMPLETIONS=false \
-/bin/bash -c "$installer_content"
+/bin/bash -c "$installer_content" bash $installer_flags
 
 installed_launcher="${tmp_dir}/bin/kast"
 installed_root="${tmp_dir}/install-root/current"
@@ -122,7 +138,12 @@ installed_root="${tmp_dir}/install-root/current"
 [[ -x "$installed_launcher" ]] || die "Installed launcher is not executable: $installed_launcher"
 [[ -L "$installed_root" ]] || die "Current install symlink was not created: $installed_root"
 [[ -x "${installed_root}/kast" ]] || die "Installed kast launcher is missing from ${installed_root}"
-[[ -x "${installed_root}/bin/kast" ]] || die "Installed kast native binary is missing from ${installed_root}/bin"
+
+if [[ "$has_native" == "true" ]]; then
+  [[ -x "${installed_root}/bin/kast" ]] || die "Installed kast native binary is missing from ${installed_root}/bin"
+else
+  [[ -f "${installed_root}/runtime-libs/classpath.txt" ]] || die "JVM-only install is missing runtime-libs/classpath.txt"
+fi
 
 "$installed_launcher" --help >/dev/null
 
