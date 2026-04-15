@@ -192,17 +192,24 @@ class KastWrapperTest {
             assertTrue(refreshResult.removedFiles.isEmpty())
             assertEquals(false, refreshResult.fullRefresh)
 
-            val rename = runCli(
-                "rename",
-                "--workspace-root=$workspace",
-                "--file-path=$sourceFile",
-                "--offset=${sourceFile.readText().indexOf("welcome")}",
-                "--new-name=salute",
-            )
-            val renameResult = defaultCliJson().decodeFromString<RenameResult>(rename.stdout)
-
-            assertTrue(renameResult.edits.isNotEmpty())
-            assertTrue(renameResult.edits.all { edit -> edit.newText == "salute" })
+            // The K2 analysis session rebuild after refresh may not complete
+            // synchronously on slow CI runners, so poll until rename succeeds.
+            waitForCondition("rename after refresh resolves welcome") {
+                val rename = runCli(
+                    "rename",
+                    "--workspace-root=$workspace",
+                    "--file-path=$sourceFile",
+                    "--offset=${sourceFile.readText().indexOf("welcome")}",
+                    "--new-name=salute",
+                    allowFailure = true,
+                )
+                if (rename.exitCode != 0) {
+                    return@waitForCondition false
+                }
+                val renameResult = defaultCliJson().decodeFromString<RenameResult>(rename.stdout)
+                renameResult.edits.isNotEmpty() &&
+                    renameResult.edits.all { edit -> edit.newText == "salute" }
+            }
         } finally {
             runCli(
                 "daemon",
