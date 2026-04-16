@@ -34,26 +34,26 @@ The copilot-setup-steps workflow pre-builds kast and exports `KAST_CLI_PATH` aut
 
 ## Phase routing
 
-| Phase | Route to | Primary tool |
-|-------|----------|--------------|
-| Understand code structure | `@explore` | `kast-scaffold.sh` |
-| Assess change scope | `@plan` | `kast-impact.sh` |
-| Make code changes | `@edit` | `kast-write-and-validate.sh` or `kast-rename.sh` |
-| Validate changes | (direct) | `kast-diagnostics.sh` |
+| Phase                     | Route to   | Primary tool                                     |
+|---------------------------|------------|--------------------------------------------------|
+| Understand code structure | `@explore` | `kast-scaffold.sh`                               |
+| Assess change scope       | `@plan`    | `kast-impact.sh`                                 |
+| Make code changes         | `@edit`    | `kast-write-and-validate.sh` or `kast-rename.sh` |
+| Validate changes          | (direct)   | `kast-diagnostics.sh`                            |
 
 ## Tool routing table
 
-| Intent | Script | No fallback |
-|--------|--------|-------------|
-| Resolve a symbol | `kast-resolve.sh` | ✓ |
-| Find all references | `kast-references.sh` | ✓ |
-| Call hierarchy / who calls / callers / callees | `kast-callers.sh` | ✓ |
-| Assess edit impact | `kast-impact.sh` | ✓ |
-| Run diagnostics | `kast-diagnostics.sh` | ✓ |
-| Rename a symbol | `kast-rename.sh` | ✓ |
-| Gather context for code generation | `kast-scaffold.sh` | ✓ |
-| Apply generated code and validate | `kast-write-and-validate.sh` | ✓ |
-| List workspace modules and source files | `kast-workspace-files.sh` | ✓ |
+| Intent                                         | Script                       | No fallback |
+|------------------------------------------------|------------------------------|-------------|
+| Resolve a symbol                               | `kast-resolve.sh`            | ✓           |
+| Find all references                            | `kast-references.sh`         | ✓           |
+| Call hierarchy / who calls / callers / callees | `kast-callers.sh`            | ✓           |
+| Assess edit impact                             | `kast-impact.sh`             | ✓           |
+| Run diagnostics                                | `kast-diagnostics.sh`        | ✓           |
+| Rename a symbol                                | `kast-rename.sh`             | ✓           |
+| Gather context for code generation             | `kast-scaffold.sh`           | ✓           |
+| Apply generated code and validate              | `kast-write-and-validate.sh` | ✓           |
+| List workspace modules and source files        | `kast-workspace-files.sh`    | ✓           |
 
 ## Wrapper scripts
 

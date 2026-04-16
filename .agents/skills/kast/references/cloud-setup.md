@@ -14,10 +14,10 @@ How to install and use kast in headless, CI, and container environments.
 
 ## Platform Support
 
-| Platform ID | OS | Architecture |
-|-------------|-----|-------------|
-| `linux-x64` | Linux | x86_64 |
-| `macos-x64` | macOS | x86_64 (Intel) |
+| Platform ID   | OS    | Architecture                    |
+|---------------|-------|---------------------------------|
+| `linux-x64`   | Linux | x86_64                          |
+| `macos-x64`   | macOS | x86_64 (Intel)                  |
 | `macos-arm64` | macOS | arm64 / aarch64 (Apple Silicon) |
 
 The platform is auto-detected by `install.sh` and `resolve-kast.sh`.
@@ -47,15 +47,15 @@ export PATH="/opt/kast/bin:$PATH"
 
 **Environment variables:**
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `KAST_VERSION` | latest | GitHub release tag to install |
-| `KAST_INSTALL_ROOT` | `~/.local/share/kast` | Directory for versioned installs |
-| `KAST_BIN_DIR` | `~/.local/bin` | Directory for the `kast` symlink |
-| `KAST_SKIP_PATH_UPDATE` | `false` | Skip writing to shell rc files |
-| `KAST_RELEASE_REPO` | `amichne/kast` | Override GitHub repo for releases |
-| `KAST_ARCHIVE_PATH` | — | Use a local archive instead of downloading |
-| `KAST_EXPECTED_SHA256` | — | Expected SHA-256 for local archive |
+| Variable                | Default               | Description                                |
+|-------------------------|-----------------------|--------------------------------------------|
+| `KAST_VERSION`          | latest                | GitHub release tag to install              |
+| `KAST_INSTALL_ROOT`     | `~/.local/share/kast` | Directory for versioned installs           |
+| `KAST_BIN_DIR`          | `~/.local/bin`        | Directory for the `kast` symlink           |
+| `KAST_SKIP_PATH_UPDATE` | `false`               | Skip writing to shell rc files             |
+| `KAST_RELEASE_REPO`     | `amichne/kast`        | Override GitHub repo for releases          |
+| `KAST_ARCHIVE_PATH`     | —                     | Use a local archive instead of downloading |
+| `KAST_EXPECTED_SHA256`  | —                     | Expected SHA-256 for local archive         |
 
 After install, the `kast` binary is at `${KAST_BIN_DIR}/kast`, pointing to `${KAST_INSTALL_ROOT}/current/kast`.
 
@@ -116,6 +116,7 @@ steps:
 ```
 
 **Key points:**
+
 - Run `workspace ensure` when later steps assume a separate readiness phase. If
   you skip it, the first runtime-dependent command auto-starts the daemon.
 - Add `--accept-indexing=true` to `workspace ensure` when later steps only need
@@ -155,11 +156,11 @@ the skill and requires only `python3 >= 3.8`, which is available everywhere.
 If you need the step-by-step approach instead of `kast-rename.sh`, replace every `jq`
 invocation with the matching `kast-plan-utils.py` subcommand:
 
-| Previously (jq) | Now (kast-plan-utils.py) |
-|---|---|
-| `jq '{edits:.edits,fileHashes:.fileHashes}' plan.json > req.json` | `python3 "$UTILS" extract-apply-request plan.json req.json` |
-| `jq -r '.affectedFiles \| join(",")' plan.json` | `python3 "$UTILS" affected-files-csv plan.json` |
-| `jq '.diagnostics \| map(select(.severity=="ERROR")) \| length' diag.json` | `python3 "$UTILS" check-diagnostics diag.json` |
+| Previously (jq)                                                            | Now (kast-plan-utils.py)                                    |
+|----------------------------------------------------------------------------|-------------------------------------------------------------|
+| `jq '{edits:.edits,fileHashes:.fileHashes}' plan.json > req.json`          | `python3 "$UTILS" extract-apply-request plan.json req.json` |
+| `jq -r '.affectedFiles \| join(",")' plan.json`                            | `python3 "$UTILS" affected-files-csv plan.json`             |
+| `jq '.diagnostics \| map(select(.severity=="ERROR")) \| length' diag.json` | `python3 "$UTILS" check-diagnostics diag.json`              |
 
 ---
 
@@ -186,9 +187,11 @@ RUN KAST_INSTALL_ROOT=/opt/kast KAST_BIN_DIR=/usr/local/bin \
 
 ## Java Version Detection
 
-`install.sh` calls `java -XshowSettings:properties -version` and parses `java.specification.version`. The same logic is used in `resolve-kast.sh`.
+`install.sh` calls `java -XshowSettings:properties -version` and parses `java.specification.version`. The same logic is
+used in `resolve-kast.sh`.
 
 To override the Java binary:
+
 ```bash
 export JAVA_HOME=/path/to/jdk-21
 ```
@@ -206,4 +209,5 @@ Cache the kast install directory to avoid re-downloading on every run:
     key: kast-${{ runner.os }}-${{ hashFiles('**/kast-version.txt') }}
 ```
 
-The installed binary structure under `${KAST_INSTALL_ROOT}/releases/<tag>/<platform>/` is stable across runs for the same version.
+The installed binary structure under `${KAST_INSTALL_ROOT}/releases/<tag>/<platform>/` is stable across runs for the
+same version.
