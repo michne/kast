@@ -769,7 +769,7 @@ internal object CliCommandCatalog {
             path = listOf("demo"),
             group = CliCommandGroup.VALIDATION,
             summary = "Interactive comparison of grep vs kast semantic analysis on your workspace.",
-            description = "Picks a symbol from your workspace — interactively via fzf or by name — and runs grep + sed alongside kast resolve, references, rename, and call-hierarchy so you can see the difference side by side.",
+            description = "Picks a symbol from your workspace — via --symbol or the built-in terminal chooser — and runs grep-style text search alongside standalone kast resolve, references, rename, and call-hierarchy so you can see the difference side by side.",
             usages = listOf(
                 "$CLI_EXECUTABLE_NAME demo [--workspace-root=/absolute/path/to/workspace] [--symbol=CliService]",
             ),
@@ -789,6 +789,105 @@ internal object CliCommandCatalog {
                 "$CLI_EXECUTABLE_NAME internal daemon-run --workspace-root=/absolute/path/to/workspace",
             ),
             visible = false,
+        ),
+        // Skill wrapper commands — hidden, called by agent shell scripts and SKILL.md tooling
+        CliCommandMetadata(
+            path = listOf("skill", "resolve"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: resolve a named symbol to a file position.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill resolve '{\"workspace_root\":\"/ws\",\"symbol\":\"MyClass\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "references"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: find references to a named symbol.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill references '{\"workspace_root\":\"/ws\",\"symbol\":\"myFun\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "callers"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: find callers of a named symbol.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill callers '{\"workspace_root\":\"/ws\",\"symbol\":\"myFun\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "diagnostics"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: run diagnostics on specified files.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill diagnostics '{\"workspace_root\":\"/ws\",\"file_paths\":[\"src/Main.kt\"]}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "rename"),
+            group = CliCommandGroup.MUTATION_FLOW,
+            summary = "Skill wrapper: rename a symbol with validation.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill rename '{\"workspace_root\":\"/ws\",\"symbol\":\"old\",\"new_name\":\"new\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "scaffold"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: scaffold context for a target file.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill scaffold '{\"workspace_root\":\"/ws\",\"target_file\":\"/ws/src/Foo.kt\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "write-and-validate"),
+            group = CliCommandGroup.MUTATION_FLOW,
+            summary = "Skill wrapper: write code and validate with diagnostics.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill write-and-validate '{\"workspace_root\":\"/ws\",\"file_path\":\"/ws/src/New.kt\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("skill", "workspace-files"),
+            group = CliCommandGroup.ANALYSIS,
+            summary = "Skill wrapper: list workspace modules and source files.",
+            description = "Hidden native skill command. Accepts one JSON request argument.",
+            usages = listOf("$CLI_EXECUTABLE_NAME skill workspace-files '{\"workspace_root\":\"/ws\"}'"),
+            visible = false,
+        ),
+        CliCommandMetadata(
+            path = listOf("eval", "skill"),
+            group = CliCommandGroup.VALIDATION,
+            summary = "Evaluate the packaged kast skill for structural quality, budget, and contract compliance.",
+            description = "Scans the skill directory, runs structural/contract/completeness checks, estimates token budgets, and produces a scored EvalResult. " +
+                "Use --compare=baseline.json to compare against a baseline and exit non-zero on regression. " +
+                "Use --format=markdown for a human-readable report.",
+            usages = listOf(
+                "$CLI_EXECUTABLE_NAME eval skill [--skill-dir=/path/to/.agents/skills/kast] [--compare=baseline.json] [--format=json|markdown]",
+            ),
+            options = listOf(
+                CliOptionMetadata(
+                    key = "skill-dir",
+                    usage = "--skill-dir=/path/to/.agents/skills/kast",
+                    description = "Path to the skill directory to evaluate. Defaults to .agents/skills/kast relative to workspace root.",
+                ),
+                CliOptionMetadata(
+                    key = "compare",
+                    usage = "--compare=baseline.json",
+                    description = "Path to a baseline EvalResult JSON file. When provided, exits non-zero if score regresses.",
+                ),
+                CliOptionMetadata(
+                    key = "format",
+                    usage = "--format=json|markdown",
+                    description = "Output format: json (default) or markdown.",
+                ),
+            ),
+            examples = listOf(
+                "$CLI_EXECUTABLE_NAME eval skill",
+                "$CLI_EXECUTABLE_NAME eval skill --compare=baseline.json",
+                "$CLI_EXECUTABLE_NAME eval skill --format=markdown",
+                "$CLI_EXECUTABLE_NAME eval skill --skill-dir=/path/to/.agents/skills/kast",
+            ),
         ),
     )
 
