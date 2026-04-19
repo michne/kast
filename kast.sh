@@ -1040,7 +1040,9 @@ USAGE
       log_note "Then run: kast workspace ensure --workspace-root=/absolute/path/to/workspace"
     fi
   fi
-  [[ "$install_intellij" == "true" ]] && log_step "IntelliJ plugin: ${install_root}/plugins/"
+  if [[ "$install_intellij" == "true" ]]; then
+    log_step "IntelliJ plugin: ${install_root}/plugins/"
+  fi
 }
 
 # ===========================================================================
