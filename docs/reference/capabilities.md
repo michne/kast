@@ -1,5 +1,8 @@
 ---
 title: Capabilities
+hide:
+    - navigation
+    - toc
 ---
 
 # Capabilities
@@ -7,415 +10,376 @@ title: Capabilities
 Every operation the Kast analysis daemon supports, organized by
 category. Expand any operation to see its input and output schemas.
 
-## System operations
+=== "System operations"
 
-### health
+    !!! abstract "At a glance"
 
-Basic health check.
+        3 operations for health checks, runtime status, and capability discovery. No capability gating required.
 
-**Category:** system | **JSON-RPC method:** `health`
+    ??? info "health — Basic health check"
 
-??? info "Output: HealthResponse"
+        === "Input"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `status` | `String` |  | Health status string, always "ok" when the daemon is responsive. |
-    | `backendName` | `String` | ✓ | Identifier of the analysis backend (e.g. "standalone" or "intellij"). |
-    | `backendVersion` | `String` | ✓ | Version string of the analysis backend. |
-    | `workspaceRoot` | `String` | ✓ | Absolute path of the workspace root directory. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            _No parameters._
+        === "Output: HealthResponse"
 
-### runtime/status
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin status: String` :material-information-outline:{ title="Default: &quot;ok&quot;" } | Health status string, always "ok" when the daemon is responsive. |
+            | `#!kotlin backendName: String` | Identifier of the analysis backend (e.g. "standalone" or "intellij"). |
+            | `#!kotlin backendVersion: String` | Version string of the analysis backend. |
+            | `#!kotlin workspaceRoot: String` | Absolute path of the workspace root directory. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-Detailed runtime state including indexing progress.
+    ??? info "runtime/status — Detailed runtime state including indexing progress"
 
-**Category:** system | **JSON-RPC method:** `runtime/status`
+        === "Input"
 
-??? info "Output: RuntimeStatusResponse"
+            _No parameters._
+        === "Output: RuntimeStatusResponse"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `state` | `RuntimeState` | ✓ | Current runtime state: STARTING, INDEXING, READY, or DEGRADED. |
-    | `healthy` | `Boolean` | ✓ | True when the daemon is responsive and not in an error state. |
-    | `active` | `Boolean` | ✓ | True when the daemon has an active workspace session. |
-    | `indexing` | `Boolean` | ✓ | True when the daemon is currently indexing the workspace. |
-    | `backendName` | `String` | ✓ | Identifier of the analysis backend. |
-    | `backendVersion` | `String` | ✓ | Version string of the analysis backend. |
-    | `workspaceRoot` | `String` | ✓ | Absolute path of the workspace root directory. |
-    | `message` | `String?` |  | Human-readable status message with additional context. |
-    | `warnings` | `List<String>` |  | Active warning messages about the runtime environment. |
-    | `sourceModuleNames` | `List<String>` |  | Names of source modules discovered in the workspace. |
-    | `dependentModuleNamesBySourceModuleName` | `Map<String, List<String>>` |  | Map from source module name to its dependency module names. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin state: RuntimeState` | Current runtime state: STARTING, INDEXING, READY, or DEGRADED. |
+            | `#!kotlin healthy: Boolean` | True when the daemon is responsive and not in an error state. |
+            | `#!kotlin active: Boolean` | True when the daemon has an active workspace session. |
+            | `#!kotlin indexing: Boolean` | True when the daemon is currently indexing the workspace. |
+            | `#!kotlin backendName: String` | Identifier of the analysis backend. |
+            | `#!kotlin backendVersion: String` | Version string of the analysis backend. |
+            | `#!kotlin workspaceRoot: String` | Absolute path of the workspace root directory. |
+            | `#!kotlin message: String?` | Human-readable status message with additional context. |
+            | `#!kotlin warnings: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Active warning messages about the runtime environment. |
+            | `#!kotlin sourceModuleNames: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Names of source modules discovered in the workspace. |
+            | `#!kotlin dependentModuleNamesBySourceModuleName: Map<String, List<String>>` :material-information-outline:{ title="Default: emptyMap()" } | Map from source module name to its dependency module names. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-### capabilities
+    ??? info "capabilities — Advertised read and mutation capabilities"
 
-Advertised read and mutation capabilities.
+        === "Input"
 
-**Category:** system | **JSON-RPC method:** `capabilities`
+            _No parameters._
+        === "Output: BackendCapabilities"
 
-??? info "Output: BackendCapabilities"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin backendName: String` | Identifier of the analysis backend. |
+            | `#!kotlin backendVersion: String` | Version string of the analysis backend. |
+            | `#!kotlin workspaceRoot: String` | Absolute path of the workspace root directory. |
+            | `#!kotlin readCapabilities: List<ReadCapability>` | Set of read operations this backend supports. |
+            | `#!kotlin mutationCapabilities: List<MutationCapability>` | Set of mutation operations this backend supports. |
+            | `#!kotlin limits: ServerLimits` | Server-enforced resource limits. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `backendName` | `String` | ✓ | Identifier of the analysis backend. |
-    | `backendVersion` | `String` | ✓ | Version string of the analysis backend. |
-    | `workspaceRoot` | `String` | ✓ | Absolute path of the workspace root directory. |
-    | `readCapabilities` | `List<ReadCapability>` | ✓ | Set of read operations this backend supports. |
-    | `mutationCapabilities` | `List<MutationCapability>` | ✓ | Set of mutation operations this backend supports. |
-    | `limits` | `ServerLimits` | ✓ | Server-enforced resource limits. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+=== "Read operations"
 
-## Read operations
+    !!! abstract "At a glance"
 
-### symbol/resolve
+        12 read-only operations for querying symbols, references, hierarchies, diagnostics, outlines, and completions.
 
-Resolve the symbol at a file position.
+    ??? info "symbol/resolve — Resolve the symbol at a file position"
 
-**Capability:** `RESOLVE_SYMBOL` | **Category:** read | **JSON-RPC method:** `symbol/resolve`
+        **Capability** &nbsp;·&nbsp; `RESOLVE_SYMBOL`
 
-??? info "Input: SymbolQuery"
+        === "Input: SymbolQuery"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the symbol to resolve. |
-    | `includeDeclarationScope` | `Boolean` |  | When true, populates the declarationScope field on the resolved symbol. |
-    | `includeDocumentation` | `Boolean` |  | When true, populates the documentation field on the resolved symbol. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the symbol to resolve. |
+            | `#!kotlin includeDeclarationScope: Boolean` :material-information-outline:{ title="Default: false" } | When true, populates the declarationScope field on the resolved symbol. |
+            | `#!kotlin includeDocumentation: Boolean` :material-information-outline:{ title="Default: false" } | When true, populates the documentation field on the resolved symbol. |
+        === "Output: SymbolResult"
 
-??? info "Output: SymbolResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin symbol: Symbol` | The resolved symbol at the queried position. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `symbol` | `Symbol` | ✓ | The resolved symbol at the queried position. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+    ??? info "references — Find all references to the symbol at a file position"
 
-### references
+        **Capability** &nbsp;·&nbsp; `FIND_REFERENCES`
 
-Find all references to the symbol at a file position.
+        === "Input: ReferencesQuery"
 
-**Capability:** `FIND_REFERENCES` | **Category:** read | **JSON-RPC method:** `references`
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the symbol whose references to find. |
+            | `#!kotlin includeDeclaration: Boolean` :material-information-outline:{ title="Default: false" } | When true, includes the symbol's own declaration in the results. |
+        === "Output: ReferencesResult"
 
-??? info "Input: ReferencesQuery"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin declaration: Symbol?` | The resolved declaration symbol, included when `includeDeclaration` was set. |
+            | `#!kotlin references: List<Location>` | List of source locations where the symbol is referenced. |
+            | `#!kotlin page: PageInfo?` | Pagination metadata when results are truncated. |
+            | `#!kotlin searchScope: SearchScope?` | Describes the scope and exhaustiveness of the search. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the symbol whose references to find. |
-    | `includeDeclaration` | `Boolean` |  | When true, includes the symbol's own declaration in the results. |
+    ??? info "call-hierarchy — Expand a bounded incoming or outgoing call tree"
 
-??? info "Output: ReferencesResult"
+        **Capability** &nbsp;·&nbsp; `CALL_HIERARCHY`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `declaration` | `Symbol?` |  | The resolved declaration symbol, included when `includeDeclaration` was set. |
-    | `references` | `List<Location>` | ✓ | List of source locations where the symbol is referenced. |
-    | `page` | `PageInfo?` |  | Pagination metadata when results are truncated. |
-    | `searchScope` | `SearchScope?` |  | Describes the scope and exhaustiveness of the search. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+        === "Input: CallHierarchyQuery"
 
-### call-hierarchy
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the function or method to expand. |
+            | `#!kotlin direction: CallDirection` | INCOMING for callers or OUTGOING for callees. |
+            | `#!kotlin depth: Int` :material-information-outline:{ title="Default: 3" } | Maximum tree depth to traverse. |
+            | `#!kotlin maxTotalCalls: Int` :material-information-outline:{ title="Default: 256" } | Maximum total call nodes to return across the entire tree. |
+            | `#!kotlin maxChildrenPerNode: Int` :material-information-outline:{ title="Default: 64" } | Maximum direct children per node before truncation. |
+            | `#!kotlin timeoutMillis: Long?` | Optional timeout in milliseconds for the traversal. |
+        === "Output: CallHierarchyResult"
 
-Expand a bounded incoming or outgoing call tree.
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin root: CallNode` | Root node of the call hierarchy tree. |
+            | `#!kotlin stats: CallHierarchyStats` | Traversal statistics including truncation indicators. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-**Capability:** `CALL_HIERARCHY` | **Category:** read | **JSON-RPC method:** `call-hierarchy`
+    ??? info "type-hierarchy — Expand supertypes and subtypes from a resolved symbol"
 
-??? info "Input: CallHierarchyQuery"
+        **Capability** &nbsp;·&nbsp; `TYPE_HIERARCHY`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the function or method to expand. |
-    | `direction` | `CallDirection` | ✓ | INCOMING for callers or OUTGOING for callees. |
-    | `depth` | `Int` |  | Maximum tree depth to traverse. |
-    | `maxTotalCalls` | `Int` |  | Maximum total call nodes to return across the entire tree. |
-    | `maxChildrenPerNode` | `Int` |  | Maximum direct children per node before truncation. |
-    | `timeoutMillis` | `Long?` |  | Optional timeout in milliseconds for the traversal. |
+        === "Input: TypeHierarchyQuery"
 
-??? info "Output: CallHierarchyResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the class or interface to expand. |
+            | `#!kotlin direction: TypeHierarchyDirection` :material-information-outline:{ title="Default: BOTH" } | SUPERTYPES, SUBTYPES, or BOTH. |
+            | `#!kotlin depth: Int` :material-information-outline:{ title="Default: 3" } | Maximum tree depth to traverse. |
+            | `#!kotlin maxResults: Int` :material-information-outline:{ title="Default: 256" } | Maximum total nodes to return. |
+        === "Output: TypeHierarchyResult"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `root` | `CallNode` | ✓ | Root node of the call hierarchy tree. |
-    | `stats` | `CallHierarchyStats` | ✓ | Traversal statistics including truncation indicators. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin root: TypeHierarchyNode` | Root node of the type hierarchy tree. |
+            | `#!kotlin stats: TypeHierarchyStats` | Traversal statistics including truncation indicators. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-### type-hierarchy
+    ??? info "semantic-insertion-point — Find the best insertion point for a new declaration"
 
-Expand supertypes and subtypes from a resolved symbol.
+        **Capability** &nbsp;·&nbsp; `SEMANTIC_INSERTION_POINT`
 
-**Capability:** `TYPE_HIERARCHY` | **Category:** read | **JSON-RPC method:** `type-hierarchy`
+        === "Input: SemanticInsertionQuery"
 
-??? info "Input: TypeHierarchyQuery"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position near the desired insertion location. |
+            | `#!kotlin target: SemanticInsertionTarget` | Where to compute the insertion point relative to the position. |
+        === "Output: SemanticInsertionResult"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the class or interface to expand. |
-    | `direction` | `TypeHierarchyDirection` |  | SUPERTYPES, SUBTYPES, or BOTH. |
-    | `depth` | `Int` |  | Maximum tree depth to traverse. |
-    | `maxResults` | `Int` |  | Maximum total nodes to return. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin insertionOffset: Int` | Zero-based byte offset where new code should be inserted. |
+            | `#!kotlin filePath: String` | Absolute path of the file containing the insertion point. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-??? info "Output: TypeHierarchyResult"
+    ??? info "diagnostics — Run compilation diagnostics for files"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `root` | `TypeHierarchyNode` | ✓ | Root node of the type hierarchy tree. |
-    | `stats` | `TypeHierarchyStats` | ✓ | Traversal statistics including truncation indicators. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+        **Capability** &nbsp;·&nbsp; `DIAGNOSTICS`
 
-### semantic-insertion-point
+        === "Input: DiagnosticsQuery"
 
-Find the best insertion point for a new declaration.
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin filePaths: List<String>` | Absolute paths of the files to analyze for diagnostics. |
+        === "Output: DiagnosticsResult"
 
-**Capability:** `SEMANTIC_INSERTION_POINT` | **Category:** read | **JSON-RPC method:** `semantic-insertion-point`
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin diagnostics: List<Diagnostic>` | List of compilation diagnostics found in the requested files. |
+            | `#!kotlin page: PageInfo?` | Pagination metadata when results are truncated. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-??? info "Input: SemanticInsertionQuery"
+    ??? info "file-outline — Get a hierarchical symbol outline for a file"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position near the desired insertion location. |
-    | `target` | `SemanticInsertionTarget` | ✓ | Where to compute the insertion point relative to the position. |
+        **Capability** &nbsp;·&nbsp; `FILE_OUTLINE`
 
-??? info "Output: SemanticInsertionResult"
+        === "Input: FileOutlineQuery"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `insertionOffset` | `Int` | ✓ | Zero-based byte offset where new code should be inserted. |
-    | `filePath` | `String` | ✓ | Absolute path of the file containing the insertion point. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin filePath: String` | Absolute path of the file to outline. |
+        === "Output: FileOutlineResult"
 
-### diagnostics
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin symbols: List<OutlineSymbol>` | Top-level symbols in the file, each containing nested children. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-Run compilation diagnostics for files.
+    ??? info "workspace-symbol — Search the workspace for symbols by name pattern"
 
-**Capability:** `DIAGNOSTICS` | **Category:** read | **JSON-RPC method:** `diagnostics`
+        **Capability** &nbsp;·&nbsp; `WORKSPACE_SYMBOL_SEARCH`
 
-??? info "Input: DiagnosticsQuery"
+        === "Input: WorkspaceSymbolQuery"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `filePaths` | `List<String>` | ✓ | Absolute paths of the files to analyze for diagnostics. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin pattern: String` | Search pattern to match against symbol names. |
+            | `#!kotlin kind: SymbolKind?` | Filter results to symbols of this kind only. |
+            | `#!kotlin maxResults: Int` :material-information-outline:{ title="Default: 100" } | Maximum number of symbols to return. |
+            | `#!kotlin regex: Boolean` :material-information-outline:{ title="Default: false" } | When true, treats the pattern as a regular expression. |
+            | `#!kotlin includeDeclarationScope: Boolean` :material-information-outline:{ title="Default: false" } | When true, populates the declarationScope field on each matched symbol. |
+        === "Output: WorkspaceSymbolResult"
 
-??? info "Output: DiagnosticsResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin symbols: List<Symbol>` | Symbols matching the search pattern. |
+            | `#!kotlin page: PageInfo?` | Pagination metadata when results are truncated. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `diagnostics` | `List<Diagnostic>` | ✓ | List of compilation diagnostics found in the requested files. |
-    | `page` | `PageInfo?` |  | Pagination metadata when results are truncated. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+    ??? info "workspace/files — List workspace modules and source files"
 
-### file-outline
+        **Capability** &nbsp;·&nbsp; `WORKSPACE_FILES`
 
-Get a hierarchical symbol outline for a file.
+        === "Input: WorkspaceFilesQuery"
 
-**Capability:** `FILE_OUTLINE` | **Category:** read | **JSON-RPC method:** `file-outline`
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin moduleName: String?` | Filter to a single module by name. Omit to list all modules. |
+            | `#!kotlin includeFiles: Boolean` :material-information-outline:{ title="Default: false" } | When true, includes individual file paths for each module. |
+        === "Output: WorkspaceFilesResult"
 
-??? info "Input: FileOutlineQuery"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin modules: List<WorkspaceModule>` | List of workspace modules visible to the daemon. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `filePath` | `String` | ✓ | Absolute path of the file to outline. |
+    ??? info "implementations — Find concrete implementations and subclasses for a declaration"
 
-??? info "Output: FileOutlineResult"
+        **Capability** &nbsp;·&nbsp; `IMPLEMENTATIONS`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `symbols` | `List<OutlineSymbol>` | ✓ | Top-level symbols in the file, each containing nested children. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+        === "Input: ImplementationsQuery"
 
-### workspace-symbol
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the interface or abstract class. |
+            | `#!kotlin maxResults: Int` :material-information-outline:{ title="Default: 100" } | Maximum number of implementation symbols to return. |
+        === "Output: ImplementationsResult"
 
-Search the workspace for symbols by name pattern.
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin declaration: Symbol` | The interface or abstract class symbol that was queried. |
+            | `#!kotlin implementations: List<Symbol>` | Concrete implementations or subclasses found. |
+            | `#!kotlin exhaustive: Boolean` :material-information-outline:{ title="Default: true" } | True when all implementations were found within maxResults. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-**Capability:** `WORKSPACE_SYMBOL_SEARCH` | **Category:** read | **JSON-RPC method:** `workspace-symbol`
+    ??? info "code-actions — Return available code actions at a file position"
 
-??? info "Input: WorkspaceSymbolQuery"
+        **Capability** &nbsp;·&nbsp; `CODE_ACTIONS`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `pattern` | `String` | ✓ | Search pattern to match against symbol names. |
-    | `kind` | `SymbolKind?` |  | Filter results to symbols of this kind only. |
-    | `maxResults` | `Int` |  | Maximum number of symbols to return. |
-    | `regex` | `Boolean` |  | When true, treats the pattern as a regular expression. |
-    | `includeDeclarationScope` | `Boolean` |  | When true, populates the declarationScope field on each matched symbol. |
+        === "Input: CodeActionsQuery"
 
-??? info "Output: WorkspaceSymbolResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position to query for available code actions. |
+            | `#!kotlin diagnosticCode: String?` | Filter to actions that address this diagnostic code. |
+        === "Output: CodeActionsResult"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `symbols` | `List<Symbol>` | ✓ | Symbols matching the search pattern. |
-    | `page` | `PageInfo?` |  | Pagination metadata when results are truncated. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin actions: List<CodeAction>` | Available code actions at the queried position. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-### workspace/files
+    ??? info "completions — Return completion candidates available at a file position"
 
-List workspace modules and source files.
+        **Capability** &nbsp;·&nbsp; `COMPLETIONS`
 
-**Capability:** `WORKSPACE_FILES` | **Category:** read | **JSON-RPC method:** `workspace/files`
+        === "Input: CompletionsQuery"
 
-??? info "Input: WorkspaceFilesQuery"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position where completions are requested. |
+            | `#!kotlin maxResults: Int` :material-information-outline:{ title="Default: 100" } | Maximum number of completion items to return. |
+            | `#!kotlin kindFilter: List<SymbolKind>?` | Restrict results to these symbol kinds only. |
+        === "Output: CompletionsResult"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `moduleName` | `String?` |  | Filter to a single module by name. Omit to list all modules. |
-    | `includeFiles` | `Boolean` |  | When true, includes individual file paths for each module. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin items: List<CompletionItem>` | Completion candidates available at the queried position. |
+            | `#!kotlin exhaustive: Boolean` :material-information-outline:{ title="Default: true" } | True when all candidates were returned within maxResults. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-??? info "Output: WorkspaceFilesResult"
+=== "Mutation operations"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `modules` | `List<WorkspaceModule>` | ✓ | List of workspace modules visible to the daemon. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+    !!! abstract "At a glance"
 
-### implementations
+        4 operations that modify workspace state: rename, optimize imports, apply edits, and refresh.
 
-Find concrete implementations and subclasses for a declaration.
+    ??? info "rename — Plan a symbol rename (dry-run by default)"
 
-**Capability:** `IMPLEMENTATIONS` | **Category:** read | **JSON-RPC method:** `implementations`
+        **Capability** &nbsp;·&nbsp; `RENAME`
 
-??? info "Input: ImplementationsQuery"
+        === "Input: RenameQuery"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the interface or abstract class. |
-    | `maxResults` | `Int` |  | Maximum number of implementation symbols to return. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin position: FilePosition` | File position identifying the symbol to rename. |
+            | `#!kotlin newName: String` | The new name to assign to the symbol. |
+            | `#!kotlin dryRun: Boolean` :material-information-outline:{ title="Default: true" } | When true (default), computes edits without applying them. |
+        === "Output: RenameResult"
 
-??? info "Output: ImplementationsResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin edits: List<TextEdit>` | Text edits needed to perform the rename across the workspace. |
+            | `#!kotlin fileHashes: List<FileHash>` | File hashes at edit-plan time for conflict detection. |
+            | `#!kotlin affectedFiles: List<String>` | Absolute paths of all files that would be modified. |
+            | `#!kotlin searchScope: SearchScope?` | Describes the scope and exhaustiveness of the rename search. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `declaration` | `Symbol` | ✓ | The interface or abstract class symbol that was queried. |
-    | `implementations` | `List<Symbol>` | ✓ | Concrete implementations or subclasses found. |
-    | `exhaustive` | `Boolean` |  | True when all implementations were found within maxResults. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+    ??? info "imports/optimize — Optimize imports for one or more files"
 
-### code-actions
+        **Capability** &nbsp;·&nbsp; `OPTIMIZE_IMPORTS`
 
-Return available code actions at a file position.
+        === "Input: ImportOptimizeQuery"
 
-**Capability:** `CODE_ACTIONS` | **Category:** read | **JSON-RPC method:** `code-actions`
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin filePaths: List<String>` | Absolute paths of the files whose imports should be optimized. |
+        === "Output: ImportOptimizeResult"
 
-??? info "Input: CodeActionsQuery"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin edits: List<TextEdit>` | Text edits that remove unused imports and sort the remainder. |
+            | `#!kotlin fileHashes: List<FileHash>` | File hashes at edit-plan time for conflict detection. |
+            | `#!kotlin affectedFiles: List<String>` | Absolute paths of all files that were modified. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position to query for available code actions. |
-    | `diagnosticCode` | `String?` |  | Filter to actions that address this diagnostic code. |
+    ??? info "edits/apply — Apply a prepared edit plan with conflict detection"
 
-??? info "Output: CodeActionsResult"
+        **Capability** &nbsp;·&nbsp; `APPLY_EDITS`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `actions` | `List<CodeAction>` | ✓ | Available code actions at the queried position. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+        === "Input: ApplyEditsQuery"
 
-### completions
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin edits: List<TextEdit>` | Text edits to apply, typically from a prior rename or code action. |
+            | `#!kotlin fileHashes: List<FileHash>` | Expected file hashes for conflict detection before writing. |
+            | `#!kotlin fileOperations: List<FileOperation>` :material-information-outline:{ title="Default: emptyList()" } | Optional file create or delete operations to perform. |
+        === "Output: ApplyEditsResult"
 
-Return completion candidates available at a file position.
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin applied: List<TextEdit>` | Text edits that were successfully applied. |
+            | `#!kotlin affectedFiles: List<String>` | Absolute paths of all files that were modified. |
+            | `#!kotlin createdFiles: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Absolute paths of files created by file operations. |
+            | `#!kotlin deletedFiles: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Absolute paths of files deleted by file operations. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |
 
-**Capability:** `COMPLETIONS` | **Category:** read | **JSON-RPC method:** `completions`
+    ??? info "workspace/refresh — Force a targeted or full workspace state refresh"
 
-??? info "Input: CompletionsQuery"
+        **Capability** &nbsp;·&nbsp; `REFRESH_WORKSPACE`
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position where completions are requested. |
-    | `maxResults` | `Int` |  | Maximum number of completion items to return. |
-    | `kindFilter` | `List<SymbolKind>?` |  | Restrict results to these symbol kinds only. |
+        === "Input: RefreshQuery"
 
-??? info "Output: CompletionsResult"
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin filePaths: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Absolute paths of files to refresh. Empty for a full workspace refresh. |
+        === "Output: RefreshResult"
 
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `items` | `List<CompletionItem>` | ✓ | Completion candidates available at the queried position. |
-    | `exhaustive` | `Boolean` |  | True when all candidates were returned within maxResults. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
-
-## Mutation operations
-
-### rename
-
-Plan a symbol rename (dry-run by default).
-
-**Capability:** `RENAME` | **Category:** mutation | **JSON-RPC method:** `rename`
-
-??? info "Input: RenameQuery"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `position` | `FilePosition` | ✓ | File position identifying the symbol to rename. |
-    | `newName` | `String` | ✓ | The new name to assign to the symbol. |
-    | `dryRun` | `Boolean` |  | When true (default), computes edits without applying them. |
-
-??? info "Output: RenameResult"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `edits` | `List<TextEdit>` | ✓ | Text edits needed to perform the rename across the workspace. |
-    | `fileHashes` | `List<FileHash>` | ✓ | File hashes at edit-plan time for conflict detection. |
-    | `affectedFiles` | `List<String>` | ✓ | Absolute paths of all files that would be modified. |
-    | `searchScope` | `SearchScope?` |  | Describes the scope and exhaustiveness of the rename search. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
-
-### imports/optimize
-
-Optimize imports for one or more files.
-
-**Capability:** `OPTIMIZE_IMPORTS` | **Category:** mutation | **JSON-RPC method:** `imports/optimize`
-
-??? info "Input: ImportOptimizeQuery"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `filePaths` | `List<String>` | ✓ | Absolute paths of the files whose imports should be optimized. |
-
-??? info "Output: ImportOptimizeResult"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `edits` | `List<TextEdit>` | ✓ | Text edits that remove unused imports and sort the remainder. |
-    | `fileHashes` | `List<FileHash>` | ✓ | File hashes at edit-plan time for conflict detection. |
-    | `affectedFiles` | `List<String>` | ✓ | Absolute paths of all files that were modified. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
-
-### edits/apply
-
-Apply a prepared edit plan with conflict detection.
-
-**Capability:** `APPLY_EDITS` | **Category:** mutation | **JSON-RPC method:** `edits/apply`
-
-??? info "Input: ApplyEditsQuery"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `edits` | `List<TextEdit>` | ✓ | Text edits to apply, typically from a prior rename or code action. |
-    | `fileHashes` | `List<FileHash>` | ✓ | Expected file hashes for conflict detection before writing. |
-    | `fileOperations` | `List<FileOperation>` |  | Optional file create or delete operations to perform. |
-
-??? info "Output: ApplyEditsResult"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `applied` | `List<TextEdit>` | ✓ | Text edits that were successfully applied. |
-    | `affectedFiles` | `List<String>` | ✓ | Absolute paths of all files that were modified. |
-    | `createdFiles` | `List<String>` |  | Absolute paths of files created by file operations. |
-    | `deletedFiles` | `List<String>` |  | Absolute paths of files deleted by file operations. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
-
-### workspace/refresh
-
-Force a targeted or full workspace state refresh.
-
-**Capability:** `REFRESH_WORKSPACE` | **Category:** mutation | **JSON-RPC method:** `workspace/refresh`
-
-??? info "Input: RefreshQuery"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `filePaths` | `List<String>` |  | Absolute paths of files to refresh. Empty for a full workspace refresh. |
-
-??? info "Output: RefreshResult"
-
-    | Field | Type | Required | Description |
-    |-------|------|----------|-------------|
-    | `refreshedFiles` | `List<String>` | ✓ | Absolute paths of files whose state was refreshed. |
-    | `removedFiles` | `List<String>` |  | Absolute paths of files that were removed from the workspace. |
-    | `fullRefresh` | `Boolean` | ✓ | True when a full workspace refresh was performed. |
-    | `schemaVersion` | `Int` |  | Protocol schema version for forward compatibility. |
+            | Signature | Description |
+            |-----------|-------------|
+            | `#!kotlin refreshedFiles: List<String>` | Absolute paths of files whose state was refreshed. |
+            | `#!kotlin removedFiles: List<String>` :material-information-outline:{ title="Default: emptyList()" } | Absolute paths of files that were removed from the workspace. |
+            | `#!kotlin fullRefresh: Boolean` | True when a full workspace refresh was performed. |
+            | `#!kotlin schemaVersion: Int` | Protocol schema version for forward compatibility. |

@@ -100,198 +100,221 @@ object DocsDocument {
 
     // ── Public render methods ─────────────────────────────────────────
 
-    fun renderCapabilities(): String = buildString {
-        appendLine("---")
-        appendLine("title: Capabilities")
-        appendLine("---")
-        appendLine()
-        appendLine("# Capabilities")
-        appendLine()
-        appendLine("Every operation the Kast analysis daemon supports, organized by")
-        appendLine("category. Expand any operation to see its input and output schemas.")
-        appendLine()
+    /** Exposes schema serializers for testing purposes only. */
+    fun schemaSerializersForTesting(): Map<String, KSerializer<*>> = schemaSerializers
+
+    fun renderCapabilities(): String {
+        val writer = IndentedWriter()
+        writer.line("---")
+        writer.line("title: Capabilities")
+        writer.line("hide:")
+        writer.line("    - navigation")
+        writer.line("    - toc")
+        writer.line("---")
+        writer.line()
+        writer.line("# Capabilities")
+        writer.line()
+        writer.line("Every operation the Kast analysis daemon supports, organized by")
+        writer.line("category. Expand any operation to see its input and output schemas.")
+        writer.line()
 
         val ops = OperationDocRegistry.all().toList()
         for (tag in listOf("system", "read", "mutation")) {
             val tagOps = ops.filter { it.tag == tag }
             if (tagOps.isEmpty()) continue
-            appendLine("## ${tagDisplayName(tag)}")
-            appendLine()
-            for (op in tagOps) {
-                appendCapabilitiesOperation(op)
+            writer.tab(tagDisplayName(tag)) {
+                admonition("abstract", "At a glance") {
+                    line(tagSummary(tag, tagOps.size))
+                }
+                line()
+                for (op in tagOps) {
+                    capabilitiesOperation(op)
+                    line()
+                }
             }
         }
-    }.trimEnd() + "\n"
 
-    fun renderApiReference(): String = buildString {
-        appendLine("---")
-        appendLine("title: API reference")
-        appendLine("---")
-        appendLine()
-        appendLine("# API reference")
-        appendLine()
-        appendLine("Complete reference for every JSON-RPC method in the Kast analysis")
-        appendLine("daemon, including input/output schemas, examples, and behavioral notes.")
-        appendLine()
+        return writer.toString().trimEnd() + "\n"
+    }
+
+    fun renderApiReference(): String {
+        val writer = IndentedWriter()
+        writer.line("---")
+        writer.line("title: API reference")
+        writer.line("hide:")
+        writer.line("    - toc")
+        writer.line("---")
+        writer.line()
+        writer.line("# API reference")
+        writer.line()
+        writer.line("Complete reference for every JSON-RPC method in the Kast analysis")
+        writer.line("daemon, including input/output schemas, examples, and behavioral notes.")
+        writer.line()
 
         val ops = OperationDocRegistry.all().toList()
         for (tag in listOf("system", "read", "mutation")) {
             val tagOps = ops.filter { it.tag == tag }
             if (tagOps.isEmpty()) continue
-            appendLine("## ${tagDisplayName(tag)}")
-            appendLine()
-            for (op in tagOps) {
-                appendApiReferenceOperation(op)
+            writer.tab(tagDisplayName(tag)) {
+                admonition("abstract", "At a glance") {
+                    line(tagSummary(tag, tagOps.size))
+                }
+                line()
+                for (op in tagOps) {
+                    apiReferenceOperation(op)
+                    line()
+                }
             }
         }
-    }.trimEnd() + "\n"
+
+        return writer.toString().trimEnd() + "\n"
+    }
 
     // ── Per-operation renderers ───────────────────────────────────────
 
-    private fun StringBuilder.appendCapabilitiesOperation(op: OperationDoc) {
-        appendLine("### ${op.jsonRpcMethod}")
-        appendLine()
-        appendLine(op.summary + ".")
-        appendLine()
-        appendBadgeLine(op)
-        appendLine()
-
-        // Collapsed input schema
-        if (op.requestSchema != null) {
-            appendLine("??? info \"Input: ${op.requestSchema}\"")
-            appendLine()
-            appendSchemaTable(op.requestSchema, indent = "    ")
-            appendLine()
+    private fun IndentedWriter.capabilitiesOperation(op: OperationDoc) {
+        details("info", "${op.jsonRpcMethod} — ${op.summary}") {
+            metaLine(op)
+            schemaTabs(op)
         }
-
-        // Collapsed output schema
-        appendLine("??? info \"Output: ${op.responseSchema}\"")
-        appendLine()
-        appendSchemaTable(op.responseSchema, indent = "    ")
-        appendLine()
     }
 
-    private fun StringBuilder.appendApiReferenceOperation(op: OperationDoc) {
-        appendLine("### ${op.jsonRpcMethod}")
-        appendLine()
-        appendLine(op.description)
-        appendLine()
-        appendBadgeLine(op)
-        appendLine()
-
-        // Expanded input schema
-        if (op.requestSchema != null) {
-            appendLine("#### Input: ${op.requestSchema}")
-            appendLine()
-            appendSchemaTable(op.requestSchema, indent = "")
-            appendLine()
+    private fun IndentedWriter.apiReferenceOperation(op: OperationDoc) {
+        details("example", "${op.jsonRpcMethod} — ${op.summary}") {
+            lines(op.description)
+            line()
+            metaLine(op)
+            schemaTabs(op)
+            exampleTabs(op)
+            behavioralNotes(op)
+            errorCodes(op)
         }
+    }
 
-        // Expanded output schema
-        appendLine("#### Output: ${op.responseSchema}")
-        appendLine()
-        appendSchemaTable(op.responseSchema, indent = "")
-        appendLine()
+    // ── Operation section helpers ─────────────────────────────────────
 
-        // Tabbed examples
-        appendTabbedExamples(op)
+    // Compact one-liner above the schema tabs. The JSON-RPC method is
+    // already in the collapsible title; we only emit a line when the
+    // operation is capability-gated.
+    private fun IndentedWriter.metaLine(op: OperationDoc) {
+        if (op.capability == null) return
+        line("**Capability** &nbsp;·&nbsp; `${op.capability}`")
+        line()
+    }
 
-        // Behavioral notes
-        if (op.behavioralNotes.isNotEmpty()) {
-            appendLine("!!! note \"Behavioral notes\"")
-            appendLine()
-            for (note in op.behavioralNotes) {
-                appendLine("    - $note")
+    // Input and Output render as peer content tabs — along with the
+    // example tabs that may follow — so the reader can flip between the
+    // request schema, response schema, and a concrete example in one
+    // tab group.
+    private fun IndentedWriter.schemaTabs(op: OperationDoc) {
+        if (op.requestSchema != null) {
+            tab("Input: ${op.requestSchema}") {
+                schemaTable(op.requestSchema)
             }
-            appendLine()
+        } else {
+            tab("Input") {
+                line("_No parameters._")
+            }
         }
-
-        // Error codes
-        if (op.errorCodes.isNotEmpty()) {
-            appendLine("**Error codes:** ${op.errorCodes.joinToString(", ") { "`$it`" }}")
-            appendLine()
+        tab("Output: ${op.responseSchema}") {
+            schemaTable(op.responseSchema)
         }
     }
 
-    // ── Badge line ────────────────────────────────────────────────────
-
-    private fun StringBuilder.appendBadgeLine(op: OperationDoc) {
-        val parts = mutableListOf<String>()
-        if (op.capability != null) {
-            parts += "**Capability:** `${op.capability}`"
+    private fun IndentedWriter.behavioralNotes(op: OperationDoc) {
+        if (op.behavioralNotes.isEmpty()) return
+        admonition("note", "Behavioral notes") {
+            for (note in op.behavioralNotes) {
+                line("- $note")
+            }
         }
-        parts += "**Category:** ${op.tag}"
-        parts += "**JSON-RPC method:** `${op.jsonRpcMethod}`"
-        appendLine(parts.joinToString(" | "))
+        line()
+    }
+
+    private fun IndentedWriter.errorCodes(op: OperationDoc) {
+        if (op.errorCodes.isEmpty()) return
+        line("**Error codes** &nbsp;·&nbsp; ${op.errorCodes.joinToString(", ") { "`$it`" }}")
     }
 
     // ── Schema table rendering ────────────────────────────────────────
 
-    private fun StringBuilder.appendSchemaTable(schemaName: String, indent: String) {
+    private fun IndentedWriter.schemaTable(schemaName: String) {
         val serializer = schemaSerializers[schemaName]
         if (serializer == null) {
-            appendLine("${indent}*Schema not found: $schemaName*")
+            line("*Schema not found: $schemaName*")
             return
         }
         val descriptor = serializer.descriptor
         if (descriptor.elementsCount == 0) {
-            appendLine("${indent}*No fields.*")
+            line("*No fields.*")
             return
         }
 
-        appendLine("${indent}| Field | Type | Required | Description |")
-        appendLine("${indent}|-------|------|----------|-------------|")
+        line("| Signature | Description |")
+        line("|-----------|-------------|")
         repeat(descriptor.elementsCount) { index ->
             val name = descriptor.getElementName(index)
             val elementDescriptor = descriptor.getElementDescriptor(index)
             val typeName = resolveTypeName(elementDescriptor)
-            val required = if (!descriptor.isElementOptional(index)) "✓" else ""
+            val isOptional = descriptor.isElementOptional(index)
             val docField = descriptor.getElementAnnotations(index)
                 .filterIsInstance<DocField>()
                 .firstOrNull()
             val description = docField?.description?.ifBlank { "" } ?: ""
-            appendLine("${indent}| `$name` | `$typeName` | $required | $description |")
+            val explicitDefault = docField?.defaultValue?.ifBlank { null }
+
+            val signature: String
+            val tooltip: String
+            when {
+                docField?.serverManaged == true -> {
+                    signature = "`#!kotlin $name: $typeName`"
+                    tooltip = ""
+                }
+                explicitDefault != null -> {
+                    signature = "`#!kotlin $name: $typeName`"
+                    val escapedDefault = explicitDefault.replace("\"", "&quot;")
+                    tooltip = " :material-information-outline:{ title=\"Default: $escapedDefault\" }"
+                }
+                else -> {
+                    val displayType = if (isOptional && !typeName.endsWith("?")) "$typeName?" else typeName
+                    signature = "`#!kotlin $name: $displayType`"
+                    tooltip = ""
+                }
+            }
+
+            line("| $signature$tooltip | $description |")
         }
     }
 
-    // ── Tabbed examples ───────────────────────────────────────────────
+    // ── Example tabs ──────────────────────────────────────────────────
 
-    private fun StringBuilder.appendTabbedExamples(op: OperationDoc) {
-        val hasCliExample = op.cliExample.isNotBlank()
-        val requestJson = readExampleFile("${op.operationId}-request.json")
-        val responseJson = readExampleFile("${op.operationId}-response.json")
-
-        if (!hasCliExample && requestJson == null && responseJson == null) return
-
-        if (hasCliExample) {
-            appendLine("=== \"CLI example\"")
-            appendLine()
-            appendLine("    ```bash")
-            appendLine("    ${op.cliExample}")
-            appendLine("    ```")
-            appendLine()
-        }
-
-        if (requestJson != null) {
-            appendLine("=== \"JSON-RPC request\"")
-            appendLine()
-            appendLine("    ```json")
-            for (line in requestJson.lines()) {
-                appendLine("    $line")
+    // Rendered as peers of the Input/Output schema tabs so everything
+    // about a single operation — its request shape, response shape, CLI
+    // invocation, and wire-level JSON — lives in one tab group. Tabs use
+    // consistent labels ("CLI", "Request", "Response") so pymdownx
+    // `content.tabs.link` can sync the active tab across every operation
+    // on the page.
+    private fun IndentedWriter.exampleTabs(op: OperationDoc) {
+        if (op.cliExample.isNotBlank()) {
+            tab("CLI") {
+                line("```bash")
+                line(op.cliExample)
+                line("```")
             }
-            appendLine("    ```")
-            appendLine()
         }
-
-        if (responseJson != null) {
-            appendLine("=== \"Example response\"")
-            appendLine()
-            appendLine("    ```json")
-            for (line in responseJson.lines()) {
-                appendLine("    $line")
+        readExampleFile("${op.operationId}-request.json")?.let { requestJson ->
+            tab("Request") {
+                line("```json")
+                lines(requestJson)
+                line("```")
             }
-            appendLine("    ```")
-            appendLine()
+        }
+        readExampleFile("${op.operationId}-response.json")?.let { responseJson ->
+            tab("Response") {
+                line("```json")
+                lines(responseJson)
+                line("```")
+            }
         }
     }
 
@@ -333,6 +356,13 @@ object DocsDocument {
         "read" -> "Read operations"
         "mutation" -> "Mutation operations"
         else -> tag.replaceFirstChar { it.uppercase() }
+    }
+
+    private fun tagSummary(tag: String, count: Int): String = when (tag) {
+        "system" -> "$count operations for health checks, runtime status, and capability discovery. No capability gating required."
+        "read" -> "$count read-only operations for querying symbols, references, hierarchies, diagnostics, outlines, and completions."
+        "mutation" -> "$count operations that modify workspace state: rename, optimize imports, apply edits, and refresh."
+        else -> "$count operations."
     }
 
     private var examplesDir: Path? = null
