@@ -264,11 +264,14 @@ val buildVersion: Provider<String> = extra["buildVersion"] as Provider<String>
 
 val writeBackendVersion by tasks.registering {
     val versionFile = layout.buildDirectory.file("generated-resources/kast-backend-version.txt")
+    // Capture as a local so the doLast lambda does not close over the build-script instance,
+    // which is null when the configuration cache deserializes the action.
+    val versionProvider = buildVersion
     outputs.file(versionFile)
     doLast {
         versionFile.get().asFile.apply {
             parentFile.mkdirs()
-            writeText(buildVersion.get())
+            writeText(versionProvider.get())
         }
     }
 }
@@ -310,13 +313,16 @@ tasks.withType<KotlinCompile>().configureEach {
         return@configureEach
     }
 
+    // Resolve to concrete files at configuration time. Configuration objects cannot be
+    // serialized for the configuration cache; a Set<File> can.
+    val serializationJarFiles: Set<File> = prioritizedSerializationRuntime.resolve()
     doFirst {
         val currentLibraries = libraries.files
         // IntelliJ's bundled ktor-utils jar also contains kotlinx.serialization
         // core classes but no version metadata. On Linux it can appear before the
         // real runtime on the compiler classpath, which breaks the serialization
         // plugin's runtime version check for @Serializable declarations.
-        libraries.setFrom(prioritizedSerializationRuntime, currentLibraries)
+        libraries.setFrom(serializationJarFiles, currentLibraries)
     }
 }
 
