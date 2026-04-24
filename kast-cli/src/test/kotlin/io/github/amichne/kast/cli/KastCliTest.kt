@@ -150,7 +150,7 @@ class KastCliTest {
         val stderr = StringBuilder()
         val expectedNote = "daemon: using standalone daemon pid=42 ready at /tmp/workspace/.kast/s"
         val cli = KastCli.testInstance(
-            commandExecutorFactory = { _, _ ->
+            commandExecutorFactory = { _ ->
                 object : CliCommandExecutor {
                     override suspend fun execute(command: CliCommand): CliExecutionResult {
                         return CliExecutionResult(
@@ -196,7 +196,7 @@ class KastCliTest {
         val stdout = StringBuilder()
         val stderr = StringBuilder()
         val cli = KastCli.testInstance(
-            commandExecutorFactory = { _, _ ->
+            commandExecutorFactory = { _ ->
                 object : CliCommandExecutor {
                     override suspend fun execute(command: CliCommand): CliExecutionResult {
                         return CliExecutionResult(

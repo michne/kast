@@ -40,14 +40,13 @@ import kotlinx.serialization.json.Json
 
 internal class CliService(
     json: Json,
-    processLauncher: ProcessLauncher,
     private val installService: InstallService = InstallService(),
     private val installSkillService: InstallSkillService = InstallSkillService(),
     private val smokeCommandSupport: SmokeCommandSupport = SmokeCommandSupport(),
     private val demoCommandSupport: DemoCommandSupport = DemoCommandSupport(),
 ) {
     private val rpcClient = KastRpcClient(json)
-    private val runtimeManager = WorkspaceRuntimeManager(rpcClient, processLauncher)
+    private val runtimeManager = WorkspaceRuntimeManager(rpcClient)
 
     suspend fun workspaceStatus(options: RuntimeCommandOptions): WorkspaceStatusResult =
         runtimeManager.workspaceStatus(options)

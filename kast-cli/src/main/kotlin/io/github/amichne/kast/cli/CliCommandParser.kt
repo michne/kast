@@ -125,7 +125,6 @@ internal class CliCommandParser(
                 listOf("demo", "generate") -> CliCommand.DemoGen(parsed.demoGenOptions(gitRemoteResolver, workingDirectory))
                 listOf("demo", "render") -> CliCommand.DemoRender(parsed.demoRenderOptions())
                 listOf("eval", "skill") -> CliCommand.EvalSkill(parsed.evalSkillOptions())
-                listOf("internal", "daemon-run") -> CliCommand.InternalDaemonRun(parsed.runtimeOptions(backendName = "standalone"))
                 else -> throw CliFailure(
                     code = "CLI_USAGE",
                     message = "Unknown command: ${metadata.commandText}",

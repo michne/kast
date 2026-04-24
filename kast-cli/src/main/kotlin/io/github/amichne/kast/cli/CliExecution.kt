@@ -1,6 +1,5 @@
 package io.github.amichne.kast.cli
 
-import io.github.amichne.kast.api.client.StandaloneServerOptions
 import io.github.amichne.kast.cli.skill.SkillWrapperExecutor
 import io.github.amichne.kast.cli.skill.SkillWrapperSerializer
 import kotlinx.serialization.json.Json
@@ -37,7 +36,6 @@ internal interface CliCommandExecutor {
 internal class DefaultCliCommandExecutor(
     private val cliService: CliService,
     private val json: Json = defaultCliJson(),
-    private val internalDaemonRunner: (suspend (StandaloneServerOptions) -> Unit)? = null,
 ) : CliCommandExecutor {
     override suspend fun execute(command: CliCommand): CliExecutionResult {
         return when (command) {
@@ -276,16 +274,6 @@ internal class DefaultCliCommandExecutor(
                         message = outcome.message,
                     )
                 }
-            }
-
-            is CliCommand.InternalDaemonRun -> {
-                val runner = internalDaemonRunner
-                    ?: throw CliFailure(
-                        code = "UNSUPPORTED_COMMAND",
-                        message = "internal daemon-run requires the JVM distribution",
-                    )
-                runner(checkNotNull(command.options.standaloneOptions))
-                CliExecutionResult(output = CliOutput.None)
             }
 
             is CliCommand.Skill -> {

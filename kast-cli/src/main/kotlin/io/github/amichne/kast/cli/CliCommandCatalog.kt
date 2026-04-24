@@ -875,16 +875,6 @@ internal object CliCommandCatalog {
                 "$CLI_EXECUTABLE_NAME demo render --json-file=/absolute/path/to/demo-20240101T120000Z.json --verbose=true",
             ),
         ),
-        CliCommandMetadata(
-            path = listOf("internal", "daemon-run"),
-            group = CliCommandGroup.WORKSPACE_LIFECYCLE,
-            summary = "Internal detached daemon entrypoint.",
-            description = "Bootstraps the standalone daemon process that the public CLI manages.",
-            usages = listOf(
-                "$CLI_EXECUTABLE_NAME internal daemon-run --workspace-root=/absolute/path/to/workspace",
-            ),
-            visible = false,
-        ),
         // Skill wrapper commands — hidden, called by agent shell scripts and SKILL.md tooling
         CliCommandMetadata(
             path = listOf("skill", "resolve"),
