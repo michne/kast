@@ -131,6 +131,7 @@ jobs:
           set -euo pipefail
           dist_dir="$RUNNER_TEMP/kast-dist"
           KAST_BIN="$dist_dir/kast-cli/kast-cli"
+          STANDALONE_BIN="$dist_dir/kast-cli/kast-standalone"
           export KAST_CONFIG_HOME="$RUNNER_TEMP/kast-config"
           workspace="$RUNNER_TEMP/kast-skill-contracts"
           source_file="$workspace/src/main/kotlin/sample/Greeter.kt"
@@ -140,6 +141,20 @@ jobs:
 
           fun greet(name: String): String = "hi $name"
           EOF
+
+          # Start the standalone backend in the background
+          "$STANDALONE_BIN" --workspace-root="$workspace" &
+          STANDALONE_PID=$!
+          trap "kill $STANDALONE_PID 2>/dev/null || true" EXIT
+
+          # Wait for the backend to be READY (up to 120s)
+          for i in $(seq 1 120); do
+            status_out="$("$KAST_BIN" workspace status --workspace-root="$workspace" 2>/dev/null || true)"
+            if echo "$status_out" | python3 -c "import json,sys; d=json.load(sys.stdin); exit(0 if d.get('servable') else 1)" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
 
           resolve_request="$(python3 - <<'PY' "$workspace" "$source_file"
           import json, sys
