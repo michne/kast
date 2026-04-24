@@ -66,6 +66,13 @@ tasks.named<ProcessResources>("processResources") {
     from(syncPackagedSkillResources)
 }
 
+tasks.named<Sync>("syncPortableDist") {
+    dependsOn(":backend-standalone:syncRuntimeLibs")
+    from(project(":backend-standalone").layout.buildDirectory.dir("runtime-libs")) {
+        into("runtime-libs")
+    }
+}
+
 tasks.named<Test>("test") {
     dependsOn(tasks.named("writeWrapperScript"))
     dependsOn(":backend-standalone:syncRuntimeLibs")

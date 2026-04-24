@@ -326,9 +326,14 @@ internal open class DemoCommandSupport(
                     id = "search",
                     lines = buildList {
                         add(tl("semantic references ${references.size}", KotterDemoStreamTone.CONFIRMED))
-                        add(tl("grep baseline ${report.textSearch.totalMatches} matches / ${report.textSearch.falsePositives} false positives", KotterDemoStreamTone.FLAGGED))
+                        add(tl("grep baseline ${report.textSearch.totalMatches} matches / ${report.textSearch.falsePositives} false positives", KotterDemoStreamTone.ERROR))
                         references.take(REFERENCE_PREVIEW_LIMIT).forEach { reference ->
-                            add(tl("${Paths.locationLine(report.workspaceRoot, reference)}  ${reference.preview.trim().take(LIVE_LINE_PREVIEW_LIMIT)}"))
+                            add(
+                                tl(
+                                    "${Paths.locationLine(report.workspaceRoot, reference)}  ${reference.preview.trim().take(LIVE_LINE_PREVIEW_LIMIT)}",
+                                    tone = KotterDemoStreamTone.ERROR
+                                )
+                            )
                         }
                         if (references.size > REFERENCE_PREVIEW_LIMIT) {
                             add(tl("... and ${references.size - REFERENCE_PREVIEW_LIMIT} more semantic hits", KotterDemoStreamTone.STRUCTURE))

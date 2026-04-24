@@ -276,9 +276,9 @@ _build_resolve_backend_zip() {
 _build_cli() {
   log_section "Building target: cli"
   rm -rf "${REPO_ROOT}/kast-cli/build/portable-dist" "${REPO_ROOT}/kast-cli/build/distributions"
-  _build_run_gradle_tasks_with_retry stageCliDist buildCliPortableZip
+  _build_run_gradle_tasks_with_retry syncRuntimeLibs stageCliDist buildCliPortableZip
 
-  log_step "Verifying staged CLI tree in ${PORTABLE_DIST_DIR}"
+    log_step "Verifying staged CLI tree in ${PORTABLE_DIST_DIR}"
   [[ -x "${PORTABLE_DIST_DIR}/kast-cli" ]]                    || die "Missing staged kast-cli launcher"
   [[ -d "${PORTABLE_DIST_DIR}/runtime-libs" ]]                 || die "Missing staged runtime-libs directory"
   [[ -f "${PORTABLE_DIST_DIR}/runtime-libs/classpath.txt" ]]   || die "Missing staged runtime classpath file"
@@ -306,7 +306,7 @@ _build_cli() {
 
 _build_plugin() {
   log_section "Building target: plugin"
-  _build_run_gradle_tasks_with_retry buildIntellijPlugin
+  _build_run_gradle_tasks_with_retry buildIntellijPlugin || _build_run_gradle_tasks_with_retry buildIntellijPlugin --offline
 
   local source_zip; source_zip="$(_build_resolve_plugin_zip)"
   local dist_zip="${DIST_ROOT}/plugin.zip"
@@ -319,7 +319,7 @@ _build_plugin() {
 _build_backend() {
   log_section "Building target: backend"
   rm -rf "${REPO_ROOT}/backend-standalone/build/portable-dist" "${REPO_ROOT}/backend-standalone/build/distributions"
-  _build_run_gradle_tasks_with_retry stageBackendDist buildBackendPortableZip
+  _build_run_gradle_tasks_with_retry kast-cli:syncRuntimeLibs stageBackendDist buildBackendPortableZip
 
   log_step "Verifying staged backend tree in ${BACKEND_PORTABLE_DIST_DIR}"
   [[ -x "${BACKEND_PORTABLE_DIST_DIR}/backend-standalone" ]]          || die "Missing staged backend-standalone launcher"
