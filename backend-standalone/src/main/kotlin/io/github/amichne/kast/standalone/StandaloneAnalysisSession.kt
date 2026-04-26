@@ -8,6 +8,7 @@ import com.intellij.openapi.Disposable
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileTypes.BinaryFileTypeDecompilers
 import com.intellij.openapi.util.Disposer
+import com.intellij.openapi.vfs.VfsUtil
 import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.platform.syntax.psi.CommonElementTypeConverterFactory
 import com.intellij.platform.syntax.psi.ElementTypeConverters
@@ -201,36 +202,12 @@ internal class StandaloneAnalysisSession(
         }
 
         analysisSessionLock.write {
-            val cachedEntriesByPath = normalizedPaths.associateWith { normalizedPath ->
-                ktFilesByPath[normalizedPath] to targetedKtFilesByPath[normalizedPath]
-            }
-            val virtualFileManager = VirtualFileManager.getInstance()
-            normalizedPaths.forEach { normalizedPath ->
-                virtualFileManager.refreshAndFindFileByNioPath(normalizedPath.toJavaPath())
-            }
-            val fileManager = PsiManagerEx.getInstanceEx(session.project).fileManager
-            val cachedVirtualFilesToInvalidate = normalizedPaths.asSequence()
-                .flatMap { normalizedPath ->
-                    cachedEntriesByPath.getValue(normalizedPath)
-                        .toList()
-                        .filterNotNull()
-                        .mapNotNull { ktFile -> ktFile.virtualFile }
-                        .asSequence()
-                }
-                .distinct()
-                .toList()
-            if (cachedVirtualFilesToInvalidate.isNotEmpty()) {
-                ApplicationManager.getApplication().runWriteAction {
-                    cachedVirtualFilesToInvalidate.forEach { virtualFile ->
-                        fileManager.setViewProvider(virtualFile, null)
-                    }
-                }
-            }
+            val cachedEntriesByPath = refreshVirtualFilesAndInvalidateCachedPsi(normalizedPaths)
 
             normalizedPaths.forEach { normalizedPath ->
-                val (cachedKtFile, cachedTargetedKtFile) = cachedEntriesByPath.getValue(normalizedPath)
-                val hadKtFileEntry = cachedKtFile != null
-                val hadTargetedEntry = cachedTargetedKtFile != null
+                val cachedEntries = cachedEntriesByPath.getValue(normalizedPath)
+                val hadKtFileEntry = cachedEntries.ktFile != null
+                val hadTargetedEntry = cachedEntries.targetedKtFile != null
                 ktFilesByPath.remove(normalizedPath)
                 targetedKtFilesByPath.remove(normalizedPath)
                 ktFileLastModifiedMillisByPath.remove(normalizedPath)
@@ -277,9 +254,16 @@ internal class StandaloneAnalysisSession(
             attributes = mapOf("kast.session.refreshedFileCount" to normalizedPaths.size),
         ) {
             analysisSessionLock.write {
+                refreshVirtualFilesAndInvalidateCachedPsi(normalizedPaths)
                 normalizedPaths.forEach { normalizedPath ->
-                    VirtualFileManager.getInstance().refreshAndFindFileByNioPath(normalizedPath.toJavaPath())
+                    ktFilesByPath.remove(normalizedPath)
+                    targetedKtFilesByPath.remove(normalizedPath)
+                    ktFileLastModifiedMillisByPath.remove(normalizedPath)
                 }
+                normalizedPaths
+                    .filter { normalizedPath -> Files.isRegularFile(normalizedPath.toJavaPath()) }
+                    .forEach { normalizedPath -> loadKtFileByPath(normalizedPath, session) }
+                PsiManager.getInstance(session.project).dropResolveCaches()
 
                 refreshStructureLocked()
 
@@ -299,6 +283,79 @@ internal class StandaloneAnalysisSession(
         refreshSourceIdentifierIndex(normalizedPaths)
         targetedCandidatePathsByLookupKey.clear()
         return buildRefreshResult(normalizedPaths, fullRefresh = false)
+    }
+
+    fun refreshTargetedPaths(paths: Set<String>): RefreshResult {
+        val normalizedPaths = normalizeTrackedKotlinPaths(paths)
+        if (normalizedPaths.all(::isKnownRegularKotlinFile)) {
+            return refreshFileContents(paths)
+        }
+        return refreshFiles(paths)
+    }
+
+    private data class CachedKtFileEntries(
+        val ktFile: KtFile?,
+        val targetedKtFile: KtFile?,
+    )
+
+    private fun refreshVirtualFilesAndInvalidateCachedPsi(
+        normalizedPaths: Collection<NormalizedPath>,
+    ): Map<NormalizedPath, CachedKtFileEntries> {
+        val cachedEntriesByPath = normalizedPaths.associateWith { normalizedPath ->
+            CachedKtFileEntries(
+                ktFile = ktFilesByPath[normalizedPath],
+                targetedKtFile = targetedKtFilesByPath[normalizedPath],
+            )
+        }
+        val refreshedVirtualFiles = normalizedPaths.mapNotNull { normalizedPath ->
+            refreshVirtualFile(normalizedPath)
+        }
+
+        val fileManager = PsiManagerEx.getInstanceEx(session.project).fileManager
+        val cachedVirtualFilesToInvalidate = (
+            cachedEntriesByPath.values.asSequence()
+                .flatMap { cachedEntries ->
+                    sequenceOf(cachedEntries.ktFile, cachedEntries.targetedKtFile)
+                        .filterNotNull()
+                        .mapNotNull { ktFile -> ktFile.virtualFile }
+                } + refreshedVirtualFiles.asSequence()
+            )
+            .distinct()
+            .toList()
+        if (cachedVirtualFilesToInvalidate.isNotEmpty()) {
+            ApplicationManager.getApplication().runWriteAction {
+                cachedVirtualFilesToInvalidate.forEach { virtualFile ->
+                    fileManager.setViewProvider(virtualFile, null)
+                }
+            }
+        }
+
+        return cachedEntriesByPath
+    }
+
+    private fun refreshVirtualFile(normalizedPath: NormalizedPath): com.intellij.openapi.vfs.VirtualFile? {
+        val filePath = normalizedPath.toJavaPath()
+        val virtualFileManager = VirtualFileManager.getInstance()
+        val virtualFile = virtualFileManager.findFileByNioPath(filePath)
+                          ?: virtualFileManager.refreshAndFindFileByNioPath(filePath)
+                          ?: return null
+        VfsUtil.markDirtyAndRefresh(
+            false,
+            false,
+            false,
+            virtualFile,
+        )
+        return virtualFile
+    }
+
+    private fun isKnownRegularKotlinFile(normalizedPath: NormalizedPath): Boolean {
+        if (!Files.isRegularFile(normalizedPath.toJavaPath())) {
+            return false
+        }
+        if (ktFilesByPath.containsKey(normalizedPath) || targetedKtFilesByPath.containsKey(normalizedPath)) {
+            return true
+        }
+        return sourceIdentifierIndex.get()?.knownPaths()?.contains(normalizedPath.value) == true
     }
 
     /**
