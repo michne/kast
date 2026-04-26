@@ -30,12 +30,6 @@ Pick the entry point you want first:
 Install the `kast` CLI from any shell:
 
 ```console
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/amichne/kast/HEAD/kast.sh)"
-```
-
-Or via pipe:
-
-```console
 curl -fsSL https://raw.githubusercontent.com/amichne/kast/HEAD/kast.sh | bash
 ```
 
