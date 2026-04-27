@@ -13,22 +13,18 @@ import com.intellij.openapi.vfs.VirtualFileManager
 import com.intellij.platform.syntax.psi.CommonElementTypeConverterFactory
 import com.intellij.platform.syntax.psi.ElementTypeConverters
 import com.intellij.psi.PsiManager
-import com.intellij.psi.PsiRecursiveElementWalkingVisitor
 import com.intellij.psi.compiled.ClassFileDecompilers
 import com.intellij.psi.impl.PsiManagerEx
 import io.github.amichne.kast.api.contract.FqName
-import io.github.amichne.kast.api.contract.KotlinIdentifier
 import io.github.amichne.kast.api.contract.ModuleName
 import io.github.amichne.kast.api.contract.NormalizedPath
-import io.github.amichne.kast.api.protocol.NotFoundException
 import io.github.amichne.kast.api.contract.PackageName
 import io.github.amichne.kast.api.contract.RefreshResult
-import io.github.amichne.kast.shared.analysis.resolvedFilePath
-import io.github.amichne.kast.shared.analysis.targetFqNameAndPackage
+import io.github.amichne.kast.api.protocol.NotFoundException
+import io.github.amichne.kast.indexstore.SqliteSourceIndexStore
+import io.github.amichne.kast.shared.analysis.PsiReferenceScanner
 import io.github.amichne.kast.standalone.cache.CacheManager
 import io.github.amichne.kast.standalone.cache.SourceIndexCache
-import io.github.amichne.kast.standalone.cache.SqliteSourceIndexStore
-import io.github.amichne.kast.standalone.cache.SymbolReferenceRow
 import io.github.amichne.kast.standalone.cache.scanTrackedKotlinFileTimestamps
 import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetry
 import io.github.amichne.kast.standalone.telemetry.StandaloneTelemetryScope
@@ -450,6 +446,16 @@ internal class StandaloneAnalysisSession(
 
     internal inline fun <T> withReadAccess(crossinline action: () -> T): T = analysisSessionLock.read { action() }
 
+    /**
+     * Acquires the session write lock for the duration of [action].
+     *
+     * Required for Phase 2 reference scanning: the K2 FIR lazy declaration resolver is
+     * not thread-safe for concurrent resolution within a single standalone session, so
+     * resolution must serialize against foreground read operations (rename, findReferences,
+     * etc.) that also acquire the session lock. See commit 02c933a.
+     */
+    internal inline fun <T> withExclusiveAccess(crossinline action: () -> T): T = analysisSessionLock.write { action() }
+
     internal fun candidateKotlinFilePaths(identifier: String): List<String> {
         return candidateKotlinFilePaths(identifier = identifier, anchorFilePath = null)
     }
@@ -492,7 +498,9 @@ internal class StandaloneAnalysisSession(
         span.setAttribute("kast.candidates.indexReady", false)
 
         // Second-tier fallback: try loading from SQLite cache (fast, no filesystem walk).
-        val sqliteIndex = runCatching { sourceIndexCache.store.loadFullIndex() }.getOrNull()
+        val sqliteIndex = runCatching {
+            MutableSourceIdentifierIndex.fromSourceIndexSnapshot(sourceIndexCache.store.loadSourceIndexSnapshot())
+        }.getOrNull()
         if (sqliteIndex != null && sqliteIndex.knownPaths().isNotEmpty()) {
             span.setAttribute("kast.candidates.source", "sqlite-fallback")
             val result = sqliteIndex.candidatePathsFor(identifier)
@@ -897,52 +905,16 @@ internal class StandaloneAnalysisSession(
         if (enablePhase2Indexing) {
             backgroundIndexer.identifierIndexReady.thenRun {
                 if (closed || sourceIndexGeneration.get() != generation) return@thenRun
-                backgroundIndexer.startPhase2(::scanFileReferences)
+                val scanner = PsiReferenceScanner(
+                    StandaloneReferenceIndexEnvironment(
+                        session = this,
+                        store = sourceIndexCache.store,
+                        cancelled = { closed },
+                    ),
+                )
+                backgroundIndexer.startPhase2(referenceScanner = scanner::scanFileReferences)
             }
         }
-    }
-
-    /**
-     * Phase 2 reference scanner: walks a single file's PSI tree, resolves references
-     * via the K2 analysis session, and extracts [SymbolReferenceRow]s mapping each
-     * reference site to its target's fully-qualified name, path, and offset.
-     *
-     * Called per-file on the Phase 2 background thread. Errors for individual elements
-     * are silently skipped so one bad reference doesn't abort the entire file scan.
-     */
-    private fun scanFileReferences(filePath: String): List<SymbolReferenceRow> {
-        val rows = mutableListOf<SymbolReferenceRow>()
-        analysisSessionLock.write {
-            val ktFile = runCatching { findKtFile(filePath) }.getOrNull() ?: return@write
-            val sourceFilePath = runCatching { ktFile.resolvedFilePath().value }.getOrElse { filePath }
-
-            ktFile.accept(
-                object : PsiRecursiveElementWalkingVisitor() {
-                    override fun visitElement(element: com.intellij.psi.PsiElement) {
-                        element.references.forEach { reference ->
-                            runCatching {
-                                val resolved = reference.resolve() ?: return@forEach
-                                val fqNameAndPkg = resolved.targetFqNameAndPackage() ?: return@forEach
-                                val (fqName, _) = fqNameAndPkg
-                                val targetPath = runCatching { resolved.resolvedFilePath().value }.getOrNull()
-                                val targetOffset = resolved.textRange?.startOffset
-                                val sourceOffset = reference.element.textRange.startOffset +
-                                    reference.rangeInElement.startOffset
-                                rows += SymbolReferenceRow(
-                                    sourcePath = sourceFilePath,
-                                    sourceOffset = sourceOffset,
-                                    targetFqName = fqName.value,
-                                    targetPath = targetPath,
-                                    targetOffset = targetOffset,
-                                )
-                            }
-                        }
-                        super.visitElement(element)
-                    }
-                },
-            )
-        }
-        return rows
     }
 
     private fun applyPendingSourceIndexRefreshes(index: MutableSourceIdentifierIndex) {

@@ -2,9 +2,10 @@ package io.github.amichne.kast.standalone
 
 import io.github.amichne.kast.api.contract.ModuleName
 import io.github.amichne.kast.api.contract.NormalizedPath
+import io.github.amichne.kast.indexstore.ReferenceIndexer
+import io.github.amichne.kast.indexstore.SqliteSourceIndexStore
+import io.github.amichne.kast.indexstore.SymbolReferenceRow
 import io.github.amichne.kast.standalone.cache.SourceIndexCache
-import io.github.amichne.kast.standalone.cache.SqliteSourceIndexStore
-import io.github.amichne.kast.standalone.cache.SymbolReferenceRow
 import java.nio.file.Path
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.atomic.AtomicInteger
@@ -40,6 +41,7 @@ internal class BackgroundIndexer(
 
     private val generation = AtomicInteger(0)
     private val indexRef = AtomicReference<MutableSourceIdentifierIndex?>(null)
+    private val phase1HeadCommit = AtomicReference<String?>(null)
 
     @Volatile
     private var cancelled = false
@@ -74,7 +76,13 @@ internal class BackgroundIndexer(
             }.onSuccess { index ->
                 if (cancelled || generation.get() != gen) return@onSuccess
                 indexRef.set(index)
-                runCatching { sourceIndexCache.save(index = index, sourceRoots = sourceRoots) }
+                runCatching {
+                    sourceIndexCache.save(
+                        index = index,
+                        sourceRoots = sourceRoots,
+                        headCommit = phase1HeadCommit.get()
+                    )
+                }
                 // Publish the index synchronously before completing the future, so any
                 // waiter on identifierIndexReady is guaranteed to see the updated state.
                 onIndexBuilt?.invoke(index)
@@ -93,7 +101,10 @@ internal class BackgroundIndexer(
      * and returns a list of [SymbolReferenceRow]s. It is called inside the
      * caller-provided read-access context (e.g., K2 analysis session).
      */
-    fun startPhase2(referenceScanner: (String) -> List<SymbolReferenceRow>) {
+    fun startPhase2(
+        changedPaths: Set<String>? = null,
+        referenceScanner: (String) -> List<SymbolReferenceRow>,
+    ) {
         phase2Thread = thread(
             start = true,
             isDaemon = true,
@@ -101,41 +112,13 @@ internal class BackgroundIndexer(
         ) {
             runCatching {
                 if (cancelled) return@thread
-                val allPaths = store.loadManifest()?.keys ?: return@thread
+                val allPaths = changedPaths ?: store.loadManifest()?.keys ?: return@thread
                 generation.incrementAndGet()
-                val pathList = allPaths.toList()
-                // Process files in batches: scan without holding a transaction, then
-                // batch-write results in a short transaction to minimize SQLite contention.
-                for (batch in pathList.chunked(PHASE2_BATCH_SIZE)) {
-                    if (cancelled || Thread.currentThread().isInterrupted) break
-                    // Phase A: scan files (no SQLite writes, may be slow due to K2 resolution)
-                    val batchResults = batch.mapNotNull { filePath ->
-                        if (cancelled || Thread.currentThread().isInterrupted) return@mapNotNull null
-                        runCatching {
-                            filePath to referenceScanner(filePath)
-                        }.getOrNull()
-                    }
-                    if (cancelled || Thread.currentThread().isInterrupted) break
-                    // Phase B: batch-write in a short transaction
-                    store.beginTransaction()
-                    try {
-                        for ((filePath, refs) in batchResults) {
-                            store.clearReferencesFromFile(filePath)
-                            refs.forEach { ref ->
-                                store.upsertSymbolReference(
-                                    sourcePath = ref.sourcePath,
-                                    sourceOffset = ref.sourceOffset,
-                                    targetFqName = ref.targetFqName,
-                                    targetPath = ref.targetPath,
-                                    targetOffset = ref.targetOffset,
-                                )
-                            }
-                        }
-                        store.commitTransaction()
-                    } catch (e: Exception) {
-                        store.rollbackTransaction()
-                    }
-                }
+                ReferenceIndexer(store, batchSize = PHASE2_BATCH_SIZE).indexReferences(
+                    filePaths = allPaths,
+                    referenceScanner = referenceScanner,
+                    isCancelled = { cancelled || Thread.currentThread().isInterrupted },
+                )
                 if (!cancelled) {
                     referenceIndexReady.complete(Unit)
                 }
@@ -214,7 +197,8 @@ internal class BackgroundIndexer(
         val incrementalResult = runCatching {
             sourceIndexCache.load(sourceRoots)
         }.getOrNull()
-        val index = incrementalResult?.index ?: return buildFullIndex()
+        val index = incrementalResult?.index ?: return buildFullIndex().also { phase1HeadCommit.set(null) }
+        phase1HeadCommit.set(incrementalResult.headCommit)
         incrementalResult.deletedPaths.forEach(index::removeFile)
         (incrementalResult.newPaths + incrementalResult.modifiedPaths).forEach { pathString ->
             if (cancelled || Thread.currentThread().isInterrupted) return index
