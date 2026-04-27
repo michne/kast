@@ -226,8 +226,17 @@ internal class DefaultCliCommandExecutor(
                 output = CliOutput.JsonValue(cliService.installSkill(command.options)),
             )
 
-            is CliCommand.Smoke -> CliExecutionResult(
-                output = CliOutput.ExternalProcess(cliService.smoke(command.options)),
+            is CliCommand.Smoke -> {
+                val report = cliService.smoke(command.options)
+                val output = when (command.options.format) {
+                    SmokeOutputFormat.JSON -> CliOutput.JsonValue(report)
+                    SmokeOutputFormat.MARKDOWN -> CliOutput.Text(report.toMarkdown())
+                }
+                CliExecutionResult(output = output)
+            }
+
+            is CliCommand.DaemonStart -> CliExecutionResult(
+                output = cliService.daemonStart(command.options),
             )
 
             is CliCommand.Skill -> {

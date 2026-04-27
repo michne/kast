@@ -14,9 +14,9 @@ the work). You install and start them separately.
 
 | What you want | Install this | How you start the backend |
 |---------------|--------------|---------------------------|
-| Terminal, CI, or agent work | `kast` CLI + standalone backend | `kast-standalone --workspace-root=<path>` |
+| Terminal, CI, or agent work | `kast` CLI + standalone backend | `kast daemon start --workspace-root=<path>` |
 | IDE-backed runtime (IntelliJ already open) | IntelliJ plugin | The plugin starts automatically when IntelliJ opens the project |
-| Both | CLI + plugin | Pick the backend you want for each session |
+| Both | CLI + plugin + standalone backend | Pick the backend you want for each session |
 
 The CLI alone does not run analysis. It routes commands to a running backend.
 You must have at least one backend running before `kast` analysis commands
@@ -60,8 +60,21 @@ components.
     ```
 
     Installs the native `kast` launcher. You still need a backend running
-    before analysis commands work. Start `kast-standalone` separately, or
-    open the project in IntelliJ with the plugin installed.
+    before analysis commands work. Start the backend separately with
+    `kast daemon start`, or open the project in IntelliJ with the plugin installed.
+
+=== "Standalone backend"
+
+    ```console title="Install CLI and standalone backend"
+    ./kast.sh install --components=cli,backend --non-interactive
+    ```
+
+    Installs the `kast` CLI and the standalone JVM backend. Start
+    the backend with:
+
+    ```console title="Start the standalone backend"
+    kast daemon start --workspace-root=/absolute/path/to/workspace
+    ```
 
 === "IntelliJ plugin only"
 
@@ -73,14 +86,23 @@ components.
     install it from disk in IntelliJ: **Settings → Plugins → ⚙️ →
     Install Plugin from Disk**. This path does not require the `kast` CLI.
 
-=== "Both"
+=== "CLI and IntelliJ plugin"
 
     ```console title="Install CLI and IntelliJ plugin"
-    ./kast.sh install --components=all --non-interactive
+    ./kast.sh install --components=cli,intellij --non-interactive
     ```
 
     Installs the `kast` CLI and downloads the IntelliJ plugin zip
     in one step. Add `--non-interactive` to skip prompts.
+
+=== "All three"
+
+    ```console title="Install CLI, IntelliJ plugin, and standalone backend"
+    ./kast.sh install --components=all --non-interactive
+    ```
+
+    Installs the `kast` CLI, the IntelliJ plugin zip, and the standalone
+    backend in one step.
 
 ## Starting the standalone backend
 
@@ -88,7 +110,7 @@ After installing the CLI, start the standalone backend before running
 analysis commands:
 
 ```console title="Start the standalone backend"
-kast-standalone --workspace-root=/absolute/path/to/your/workspace
+kast daemon start --workspace-root=/absolute/path/to/your/workspace
 ```
 
 Keep this running in a background terminal or as a background process.
@@ -105,7 +127,7 @@ kast daemon stop --workspace-root=/absolute/path/to/your/workspace
 
 | Flag | What it does |
 |------|--------------|
-| `--components=<list>` | Comma-separated: `cli`, `intellij`, `all`. Default: `cli` |
+| `--components=<list>` | Comma-separated: `cli`, `intellij`, `backend`, `all`. Default: `cli` |
 | `--non-interactive` | Skip all interactive prompts |
 
 ## When Gradle files matter
