@@ -34,6 +34,8 @@ internal class BackgroundIndexer(
     private val sourceIndexCache: SourceIndexCache,
     private val store: SqliteSourceIndexStore,
     private val initialSourceIndexBuilder: (() -> Map<String, List<String>>)? = null,
+    private val phase2BatchSize: Int = PHASE2_BATCH_SIZE_DEFAULT,
+    private val interBatchYield: (() -> Unit)? = null,
 ) : AutoCloseable {
 
     val identifierIndexReady = CompletableFuture<Unit>()
@@ -114,10 +116,11 @@ internal class BackgroundIndexer(
                 if (cancelled) return@thread
                 val allPaths = changedPaths ?: store.loadManifest()?.keys ?: return@thread
                 generation.incrementAndGet()
-                ReferenceIndexer(store, batchSize = PHASE2_BATCH_SIZE).indexReferences(
+                ReferenceIndexer(store, batchSize = phase2BatchSize).indexReferences(
                     filePaths = allPaths,
                     referenceScanner = referenceScanner,
                     isCancelled = { cancelled || Thread.currentThread().isInterrupted },
+                    throttle = interBatchYield,
                 )
                 if (!cancelled) {
                     referenceIndexReady.complete(Unit)
@@ -167,10 +170,11 @@ internal class BackgroundIndexer(
         }
         if (referenceScanner != null) {
             val changedPathStrings = paths.map { it.value }.toSet()
-            ReferenceIndexer(store, batchSize = PHASE2_BATCH_SIZE).reindexFiles(
+            ReferenceIndexer(store, batchSize = phase2BatchSize).reindexFiles(
                 changedPaths = changedPathStrings,
                 referenceScanner = referenceScanner,
                 isCancelled = { cancelled || Thread.currentThread().isInterrupted },
+                throttle = interBatchYield,
             )
         }
     }
@@ -202,7 +206,7 @@ internal class BackgroundIndexer(
 
     companion object {
         /** Number of files to batch per Phase 2 transaction to reduce SQLite write contention. */
-        private const val PHASE2_BATCH_SIZE = 50
+        internal const val PHASE2_BATCH_SIZE_DEFAULT = 50
     }
 
     private fun loadOrBuildIndex(): MutableSourceIdentifierIndex {
