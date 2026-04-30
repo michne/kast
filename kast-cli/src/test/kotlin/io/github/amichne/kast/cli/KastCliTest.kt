@@ -4,8 +4,16 @@ import io.github.amichne.kast.api.contract.BackendCapabilities
 import io.github.amichne.kast.api.contract.MutationCapability
 import io.github.amichne.kast.api.contract.ReadCapability
 import io.github.amichne.kast.api.contract.ServerLimits
+import io.github.amichne.kast.cli.tty.CliCommand
+import io.github.amichne.kast.cli.tty.CliCommandCatalog
+import io.github.amichne.kast.cli.tty.CliCommandExecutor
+import io.github.amichne.kast.cli.tty.CliErrorResponse
+import io.github.amichne.kast.cli.tty.CliExecutionResult
+import io.github.amichne.kast.cli.tty.CliExternalProcess
+import io.github.amichne.kast.cli.tty.CliOutput
+import io.github.amichne.kast.cli.tty.CliTextTheme
+import io.github.amichne.kast.cli.tty.defaultCliJson
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -163,6 +171,30 @@ class KastCliTest {
         assertEquals(7, exitCode)
         assertEquals("shell stdout\n", stdout.toString())
         assertEquals("shell stderr\n", stderr.toString())
+    }
+
+    @Test
+    fun `interactive graph falls back to shell rendering when stdout is redirected`() {
+        val stdout = StringBuilder()
+        val stderr = StringBuilder()
+        val graph = sampleMetricsGraph()
+        val cli = KastCli.testInstance(
+            commandExecutorFactory = { _ ->
+                object : CliCommandExecutor {
+                    override suspend fun execute(command: CliCommand): CliExecutionResult {
+                        return CliExecutionResult(
+                            output = CliOutput.InteractiveGraph(graph),
+                        )
+                    }
+                }
+            },
+        )
+
+        val exitCode = cli.run(arrayOf("--help"), stdout, stderr)
+
+        assertEquals(0, exitCode)
+        assertEquals(MetricsGraphShell.render(graph), stdout.toString())
+        assertEquals("", stderr.toString())
     }
 
     private fun sampleCapabilities(): BackendCapabilities {

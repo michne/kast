@@ -266,6 +266,134 @@ class MetricsEngine(workspaceRoot: Path) : AutoCloseable {
         )
     }
 
+    /**
+     * Fuzzy search the source index for symbol fully-qualified names that match [query].
+     *
+     * The matcher is case-insensitive and substring-based against `fq_names.fq_name`. Results
+     * are ordered so that exact matches and short, simple-name matches rank first; remaining
+     * matches are returned alphabetically. An empty or blank [query] returns the most-frequently
+     * referenced symbols up to [limit].
+     *
+     * Returns an empty list when the workspace has not been indexed yet or the schema is stale,
+     * mirroring the safe defaults used by the metrics queries.
+     */
+    fun searchSymbols(query: String, limit: Int = 25): List<String> {
+        require(limit >= 0) { "limit must be non-negative" }
+        if (limit == 0) return emptyList()
+        val trimmed = query.trim()
+        return readMetric(emptyList()) { conn ->
+            val sql = if (trimmed.isEmpty()) {
+                """
+                SELECT names.fq_name
+                FROM fq_names names
+                JOIN symbol_references refs ON refs.target_fq_id = names.fq_id
+                GROUP BY names.fq_id
+                ORDER BY COUNT(*) DESC, names.fq_name ASC
+                LIMIT ?
+                """.trimIndent()
+            } else {
+                """
+                SELECT names.fq_name
+                FROM fq_names names
+                WHERE LOWER(names.fq_name) LIKE ? ESCAPE '\'
+                ORDER BY
+                    CASE
+                        WHEN LOWER(names.fq_name) = ? THEN 0
+                        WHEN LOWER(names.fq_name) LIKE ? ESCAPE '\' THEN 1
+                        WHEN LOWER(names.fq_name) LIKE ? ESCAPE '\' THEN 2
+                        ELSE 3
+                    END,
+                    LENGTH(names.fq_name) ASC,
+                    names.fq_name ASC
+                LIMIT ?
+                """.trimIndent()
+            }
+            conn.prepareStatement(sql).use { stmt ->
+                if (trimmed.isEmpty()) {
+                    stmt.setInt(1, limit)
+                } else {
+                    val needle = trimmed.lowercase().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                    stmt.setString(1, "%$needle%")
+                    stmt.setString(2, trimmed.lowercase())
+                    stmt.setString(3, "%.$needle")
+                    stmt.setString(4, "$needle%")
+                    stmt.setInt(5, limit)
+                }
+                stmt.executeQuery().use { rs ->
+                    buildList {
+                        while (rs.next()) {
+                            add(rs.getString(1))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fun graph(fqName: String, depth: Int): MetricsGraph {
+        require(depth >= 0) { "depth must be non-negative" }
+
+        val focal = fanInMetric(fqName)
+        val impact = changeImpactRadius(fqName = fqName, depth = depth)
+        val directReferences = impact.filter { it.depth == 1 && it.viaTargetFqName == fqName }
+        val childIdsByParent = buildChildIdsByParent(focal, impact)
+        val impactBySourcePath = impact.groupBy { it.sourcePath }
+        val nodes = buildList {
+            add(focalSymbolNode(fqName, focal, directReferences, childIdsByParent))
+            focal?.targetPath?.let { targetPath ->
+                add(targetFileNode(targetPath, focal, childIdsByParent))
+            }
+            impactBySourcePath.forEach { (_, nodesForPath) ->
+                val representative = nodesForPath.minBy { it.depth }
+                add(sourceFileNode(nodesForPath, childIdsByParent, parentIdFor(representative, impact, fqName)))
+                nodesForPath.forEach { node -> add(referenceEdgeNode(node)) }
+            }
+        }
+        val edges = buildList {
+            focal?.targetPath?.let { targetPath ->
+                add(
+                    MetricsGraphEdge(
+                        from = fileNodeId(targetPath),
+                        to = symbolNodeId(fqName),
+                        edgeType = MetricsGraphEdgeType.CONTAINS,
+                    ),
+                )
+            }
+            impactBySourcePath.forEach { (_, nodesForPath) ->
+                val representative = nodesForPath.minBy { it.depth }
+                add(
+                    MetricsGraphEdge(
+                        from = parentIdFor(representative, impact, fqName),
+                        to = sourceFileNodeId(representative.sourcePath),
+                        edgeType = MetricsGraphEdgeType.REFERENCED_BY,
+                        weight = nodesForPath.sumOf(ChangeImpactNode::occurrenceCount),
+                    ),
+                )
+                nodesForPath.forEach { node ->
+                    add(
+                        MetricsGraphEdge(
+                            from = sourceFileNodeId(node.sourcePath),
+                            to = referenceEdgeNodeId(node),
+                            edgeType = MetricsGraphEdgeType.REFERENCES,
+                            weight = node.occurrenceCount,
+                        ),
+                    )
+                }
+            }
+        }
+        return MetricsGraph(
+            focalNodeId = symbolNodeId(fqName),
+            nodes = nodes,
+            edges = edges,
+            index = MetricsGraphIndex(
+                symbolCount = 1 + impact.map(ChangeImpactNode::viaTargetFqName).filterNot { it == fqName }.distinct().size,
+                fileCount = listOfNotNull(focal?.targetPath).plus(impact.map(ChangeImpactNode::sourcePath)).distinct().size,
+                referenceCount = impact.sumOf(ChangeImpactNode::occurrenceCount),
+                maxDepth = impact.maxOfOrNull(ChangeImpactNode::depth) ?: 0,
+            ),
+        )
+    }
+
     override fun close() {
         cachedConnection?.let { conn ->
             if (!conn.isClosed) conn.close()
@@ -294,6 +422,171 @@ class MetricsEngine(workspaceRoot: Path) : AutoCloseable {
                 }
             }
         }
+
+    private fun fanInMetric(fqName: String): FanInMetric? =
+        readMetric(null) { conn ->
+            conn.prepareStatement(
+                """
+                    SELECT target_name.fq_name,
+                           target_prefix.dir_path,
+                           refs.tgt_filename,
+                           target_meta.module_path,
+                           target_meta.source_set,
+                           COUNT(*) AS occurrence_count,
+                           COUNT(DISTINCT refs.src_prefix_id || ':' || refs.src_filename) AS source_file_count,
+                           COUNT(DISTINCT source_meta.module_path) AS source_module_count
+                    FROM symbol_references refs
+                    LEFT JOIN file_metadata source_meta
+                      ON source_meta.prefix_id = refs.src_prefix_id
+                     AND source_meta.filename = refs.src_filename
+                    LEFT JOIN file_metadata target_meta
+                      ON target_meta.prefix_id = refs.tgt_prefix_id
+                     AND target_meta.filename = refs.tgt_filename
+                    JOIN fq_names target_name ON target_name.fq_id = refs.target_fq_id
+                    LEFT JOIN path_prefixes target_prefix ON target_prefix.prefix_id = refs.tgt_prefix_id
+                    WHERE target_name.fq_name = ?
+                    GROUP BY refs.target_fq_id, refs.tgt_prefix_id, refs.tgt_filename, target_meta.module_path, target_meta.source_set
+                """.trimIndent(),
+            ).use { stmt ->
+                stmt.setString(1, fqName)
+                stmt.executeQuery().use { rs ->
+                    val row = MetricResultRow(resultSet = rs, fields = FanInField.entries)
+                    if (!rs.next()) {
+                        null
+                    } else {
+                        FanInMetric(
+                            targetFqName = row.string(FanInField.TARGET_FQ_NAME),
+                            targetPath = row.nullablePath(FanInField.TARGET_DIR, FanInField.TARGET_FILENAME),
+                            targetModulePath = row.nullableString(FanInField.TARGET_MODULE_PATH),
+                            targetSourceSet = row.nullableString(FanInField.TARGET_SOURCE_SET),
+                            occurrenceCount = row.int(FanInField.OCCURRENCE_COUNT),
+                            sourceFileCount = row.int(FanInField.SOURCE_FILE_COUNT),
+                            sourceModuleCount = row.int(FanInField.SOURCE_MODULE_COUNT),
+                        )
+                    }
+                }
+            }
+        }
+
+    private fun buildChildIdsByParent(
+        focal: FanInMetric?,
+        impact: List<ChangeImpactNode>,
+    ): Map<String, List<String>> =
+        buildMap {
+            focal?.targetPath?.let { targetPath ->
+                put(fileNodeId(targetPath), listOf(symbolNodeId(focal.targetFqName)))
+            }
+            impact.groupBy { parentIdFor(it, impact, focal?.targetFqName ?: it.viaTargetFqName) }
+                .forEach { (parentId, children) ->
+                    put(parentId, children.map { sourceFileNodeId(it.sourcePath) }.distinct())
+                }
+            // Append reference-edge children to existing source-file entries; do not overwrite the
+            // source-file → source-file links established above.
+            impact.forEach { node ->
+                val parentId = sourceFileNodeId(node.sourcePath)
+                put(parentId, getOrDefault(parentId, emptyList()) + referenceEdgeNodeId(node))
+            }
+        }
+
+    private fun focalSymbolNode(
+        fqName: String,
+        focal: FanInMetric?,
+        directReferences: List<ChangeImpactNode>,
+        childIdsByParent: Map<String, List<String>>,
+    ): MetricsGraphNode {
+        val attributes = buildList {
+            focal?.targetPath?.let { add("path=$it") }
+            focal?.targetModulePath?.let { add("module=$it") }
+            focal?.targetSourceSet?.let { add("sourceSet=$it") }
+            add("incomingReferences=${focal?.occurrenceCount ?: directReferences.sumOf(ChangeImpactNode::occurrenceCount)}")
+            add("sourceFiles=${focal?.sourceFileCount ?: directReferences.map(ChangeImpactNode::sourcePath).distinct().size}")
+            focal?.sourceModuleCount?.let { add("sourceModules=$it") }
+        }
+        return MetricsGraphNode(
+            id = symbolNodeId(fqName),
+            name = fqName,
+            type = MetricsGraphNodeType.SYMBOL,
+            parentId = focal?.targetPath?.let(::fileNodeId),
+            children = childIdsByParent[symbolNodeId(fqName)].orEmpty(),
+            attributes = attributes,
+        )
+    }
+
+    private fun targetFileNode(
+        targetPath: String,
+        focal: FanInMetric,
+        childIdsByParent: Map<String, List<String>>,
+    ): MetricsGraphNode =
+        MetricsGraphNode(
+            id = fileNodeId(targetPath),
+            name = targetPath,
+            type = MetricsGraphNodeType.FILE,
+            children = childIdsByParent[fileNodeId(targetPath)].orEmpty(),
+            attributes = listOfNotNull(
+                "role=target",
+                focal.targetModulePath?.let { "module=$it" },
+                focal.targetSourceSet?.let { "sourceSet=$it" },
+            ),
+        )
+
+    private fun sourceFileNode(
+        nodes: List<ChangeImpactNode>,
+        childIdsByParent: Map<String, List<String>>,
+        parentId: String,
+    ): MetricsGraphNode {
+        val representative = nodes.minBy { it.depth }
+        return MetricsGraphNode(
+            id = sourceFileNodeId(representative.sourcePath),
+            name = representative.sourcePath,
+            type = MetricsGraphNodeType.FILE,
+            parentId = parentId,
+            children = childIdsByParent[sourceFileNodeId(representative.sourcePath)].orEmpty(),
+            attributes = listOf(
+                "incomingDepth=${representative.depth}",
+                "references=${nodes.sumOf(ChangeImpactNode::occurrenceCount)}",
+                "via=${representative.viaTargetFqName}",
+            ),
+        )
+    }
+
+    private fun referenceEdgeNode(node: ChangeImpactNode): MetricsGraphNode =
+        MetricsGraphNode(
+            id = referenceEdgeNodeId(node),
+            name = node.viaTargetFqName,
+            type = MetricsGraphNodeType.REFERENCE_EDGE,
+            parentId = sourceFileNodeId(node.sourcePath),
+            attributes = listOf(
+                "from=${node.sourcePath}",
+                "to=${node.viaTargetFqName}",
+                "references=${node.occurrenceCount}",
+            ),
+        )
+
+    private fun parentIdFor(
+        node: ChangeImpactNode,
+        impact: List<ChangeImpactNode>,
+        fqName: String,
+    ): String =
+        impact
+            .firstOrNull { candidate ->
+                // Match the candidate's filename against the simple (last-segment) name of the via FQ
+                // name to avoid false positives where the FQ name merely *ends with* the filename
+                // (e.g. "com.example.CB" should not match a file "B.kt").
+                candidate.depth == node.depth - 1 &&
+                    node.viaTargetFqName.substringAfterLast('.') ==
+                    candidate.sourcePath.substringAfterLast('/').removeSuffix(".kt")
+            }
+            ?.sourcePath
+            ?.let(::sourceFileNodeId)
+            ?: symbolNodeId(fqName)
+
+    private fun symbolNodeId(fqName: String): String = "symbol:$fqName"
+
+    private fun fileNodeId(path: String): String = "file:$path"
+
+    private fun sourceFileNodeId(path: String): String = "source-file:$path"
+
+    private fun referenceEdgeNodeId(node: ChangeImpactNode): String = "via:${node.viaTargetFqName}:${node.sourcePath}"
 
     private fun schemaIsCurrent(conn: Connection): Boolean = try {
         val version = conn.prepareStatement("SELECT version FROM schema_version LIMIT 1").use { stmt ->

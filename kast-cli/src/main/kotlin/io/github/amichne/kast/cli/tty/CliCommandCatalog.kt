@@ -1,4 +1,6 @@
-package io.github.amichne.kast.cli
+package io.github.amichne.kast.cli.tty
+
+import io.github.amichne.kast.cli.KastCli
 
 internal const val CLI_EXECUTABLE_NAME = "kast"
 
@@ -340,6 +342,11 @@ internal object CliCommandCatalog {
         key = "depth",
         usage = "--depth=3",
         description = "Maximum edge depth for impact traversal. Defaults to 3.",
+    )
+    private val metricsInteractiveOption = CliOptionMetadata(
+        key = "interactive",
+        usage = "--interactive=true",
+        description = "Render an interactive shell graph view instead of JSON.",
     )
 
     private val commands: List<CliCommandMetadata> = listOf(
@@ -998,6 +1005,22 @@ internal object CliCommandCatalog {
                 "$CLI_EXECUTABLE_NAME metrics impact --workspace-root=/absolute/path/to/workspace --symbol=com.example.MyClass --depth=5",
             ),
         ),
+        CliCommandMetadata(
+            path = listOf("metrics", "graph"),
+            group = CliCommandGroup.METRICS,
+            summary = "Show a navigable symbol graph from the local reference index.",
+            description = "Queries the local SQLite reference index without a running daemon. Builds a focal symbol graph with target file, incoming source files, reference edges, and index summary. Add --interactive=true for a keyboard-navigable shell view; with --interactive you may omit --symbol to fuzzy-pick one from the index.",
+            usages = listOf(
+                "$CLI_EXECUTABLE_NAME metrics graph --workspace-root=/absolute/path/to/workspace --symbol=com.example.MyClass [--depth=3] [--interactive=true]",
+                "$CLI_EXECUTABLE_NAME metrics graph --workspace-root=/absolute/path/to/workspace --interactive=true",
+            ),
+            options = listOf(workspaceRootOption, metricsSymbolOption, metricsDepthOption, metricsInteractiveOption),
+            examples = listOf(
+                "$CLI_EXECUTABLE_NAME metrics graph --workspace-root=/absolute/path/to/workspace --symbol=com.example.MyClass",
+                "$CLI_EXECUTABLE_NAME metrics graph --workspace-root=/absolute/path/to/workspace --symbol=com.example.MyClass --depth=5 --interactive=true",
+                "$CLI_EXECUTABLE_NAME metrics graph --workspace-root=/absolute/path/to/workspace --interactive=true",
+            ),
+        ),
         // Skill wrapper: metrics — hidden, called by agent shell scripts
         CliCommandMetadata(
             path = listOf("skill", "metrics"),
@@ -1298,8 +1321,8 @@ internal object CliCommandCatalog {
 
 internal fun currentCliVersion(): String {
     return KastCli::class.java.`package`.implementationVersion
-        ?: System.getProperty("io.github.amichne.kast.version")
-        ?: "dev"
+           ?: System.getProperty("io.github.amichne.kast.version")
+           ?: "dev"
 }
 
 private fun List<String>.isPrefixOf(other: List<String>): Boolean {

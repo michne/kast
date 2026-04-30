@@ -1,4 +1,4 @@
-package io.github.amichne.kast.cli
+package io.github.amichne.kast.cli.tty
 
 import io.github.amichne.kast.api.contract.query.ApplyEditsQuery
 import io.github.amichne.kast.api.contract.CallDirection
@@ -22,6 +22,12 @@ import io.github.amichne.kast.api.contract.TypeHierarchyDirection
 import io.github.amichne.kast.api.contract.query.TypeHierarchyQuery
 import io.github.amichne.kast.api.contract.query.WorkspaceFilesQuery
 import io.github.amichne.kast.api.contract.query.WorkspaceSymbolQuery
+import io.github.amichne.kast.cli.options.DaemonStartOptions
+import io.github.amichne.kast.cli.options.InstallOptions
+import io.github.amichne.kast.cli.options.InstallSkillOptions
+import io.github.amichne.kast.cli.options.RuntimeCommandOptions
+import io.github.amichne.kast.cli.options.SmokeOptions
+import io.github.amichne.kast.cli.SmokeOutputFormat
 import io.github.amichne.kast.cli.skill.SkillWrapperName
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
@@ -148,6 +154,23 @@ internal class CliCommandParser(
                     ),
                     depth = parsed.optionalInt("depth") ?: 3,
                 )
+                listOf("metrics", "graph") -> {
+                    val symbol = parsed.options["symbol"]
+                    val interactive = parsed.parseBool("interactive")
+                    if (symbol == null && !interactive) {
+                        throw CliFailure(
+                            code = "CLI_USAGE",
+                            message = "--symbol is required for metrics graph (or pass --interactive=true to pick one)",
+                        )
+                    }
+                    CliCommand.Metrics(
+                        subcommand = MetricsSubcommand.GRAPH,
+                        workspaceRoot = parsed.requireWorkspaceRootPath(),
+                        symbol = symbol,
+                        depth = parsed.optionalInt("depth") ?: 3,
+                        interactive = interactive,
+                    )
+                }
                 else -> throw CliFailure(
                     code = "CLI_USAGE",
                     message = "Unknown command: ${metadata.commandText}",
@@ -508,8 +531,8 @@ internal data class ParsedArguments(
     fun installSkillOptions(): InstallSkillOptions = InstallSkillOptions(
         targetDir = options["target-dir"]?.let { Path.of(it).toAbsolutePath().normalize() },
         name = options["name"]?.takeIf(String::isNotEmpty)
-            ?: options["link-name"]?.takeIf(String::isNotEmpty)
-            ?: "kast",
+               ?: options["link-name"]?.takeIf(String::isNotEmpty)
+               ?: "kast",
         force = optionalBoolean("yes", false),
     )
 
@@ -519,11 +542,11 @@ internal data class ParsedArguments(
             archivePath = Path.of(requireOption("archive")).toAbsolutePath().normalize(),
             instanceName = options["instance"]?.takeIf(String::isNotEmpty),
             instancesRoot = options["instances-root"]
-                ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?: home.resolve(".local/share/kast/instances"),
+                                ?.let { Path.of(it).toAbsolutePath().normalize() }
+                            ?: home.resolve(".local/share/kast/instances"),
             binDir = options["bin-dir"]
-                ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?: home.resolve(".local/bin"),
+                         ?.let { Path.of(it).toAbsolutePath().normalize() }
+                     ?: home.resolve(".local/bin"),
         )
     }
 
@@ -542,8 +565,8 @@ internal data class ParsedArguments(
         }
         val format = options["format"]
             ?.takeIf(String::isNotBlank)
-            ?.let(SmokeOutputFormat::fromCliValue)
-            ?: SmokeOutputFormat.JSON
+            ?.let(SmokeOutputFormat.Companion::fromCliValue)
+                     ?: SmokeOutputFormat.JSON
         if (options["format"] != null && SmokeOutputFormat.fromCliValue(checkNotNull(options["format"])) == null) {
             throw CliFailure(
                 code = "CLI_USAGE",
@@ -552,9 +575,9 @@ internal data class ParsedArguments(
         }
         return SmokeOptions(
             workspaceRoot = options["workspace-root"]
-                ?.takeIf(String::isNotBlank)
-                ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?: Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize(),
+                                ?.takeIf(String::isNotBlank)
+                                ?.let { Path.of(it).toAbsolutePath().normalize() }
+                            ?: Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize(),
             fileFilter = options["file"]?.takeIf(String::isNotBlank),
             sourceSetFilter = options["source-set"]?.takeIf(String::isNotBlank),
             symbolFilter = options["symbol"]?.takeIf(String::isNotBlank),
@@ -572,9 +595,9 @@ internal data class ParsedArguments(
         return DaemonStartOptions(
             standaloneArgs = forwardedArgs,
             workspaceRoot = options["workspace-root"]
-                ?.takeIf(String::isNotBlank)
-                ?.let { Path.of(it).toAbsolutePath().normalize() }
-                ?: Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize(),
+                                ?.takeIf(String::isNotBlank)
+                                ?.let { Path.of(it).toAbsolutePath().normalize() }
+                            ?: Path.of(System.getProperty("user.dir", ".")).toAbsolutePath().normalize(),
             runtimeLibsDir = runtimeLibsDir,
         )
     }
@@ -679,15 +702,16 @@ internal data class ParsedArguments(
     }
 
     fun optionalInt(key: String): Int? = options[key]?.toIntOrNull()
-}
 
-private fun ParsedArguments.parseBool(key: String): Boolean = when (options[key]?.lowercase()) {
-    null, "", "true", "on", "yes", "1" -> options.containsKey(key)
-    "false", "off", "no", "0" -> false
-    else -> throw CliFailure(
-        code = "CLI_USAGE",
-        message = "Unknown value for --$key: ${options[key]}. Valid values: true, false.",
-    )
+    fun parseBool(key: String): Boolean = when (options[key]?.lowercase()) {
+        null -> false
+        "", "true", "on", "yes", "1" -> true
+        "false", "off", "no", "0" -> false
+        else -> throw CliFailure(
+            code = "CLI_USAGE",
+            message = "Unknown value for --$key: ${options[key]}. Valid values: true, false.",
+        )
+    }
 }
 
 private val VALID_BACKEND_NAMES = setOf("standalone", "intellij")

@@ -4,6 +4,12 @@ import io.github.amichne.kast.api.contract.query.RefreshQuery
 import io.github.amichne.kast.api.contract.SemanticInsertionTarget
 import io.github.amichne.kast.api.contract.SymbolKind
 import io.github.amichne.kast.api.contract.TypeHierarchyDirection
+import io.github.amichne.kast.cli.tty.CliCommand
+import io.github.amichne.kast.cli.tty.CliCommandParser
+import io.github.amichne.kast.cli.tty.CliCompletionShell
+import io.github.amichne.kast.cli.tty.CliFailure
+import io.github.amichne.kast.cli.tty.MetricsSubcommand
+import io.github.amichne.kast.cli.tty.defaultCliJson
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
@@ -667,6 +673,20 @@ class CliCommandParserTest {
 
         val metrics = command as CliCommand.Metrics
         assertEquals(5, metrics.depth)
+    }
+
+    @Test
+    fun `metrics graph parses interactive option`() {
+        val command = parser.parse(
+            arrayOf("metrics", "graph", "--workspace-root=$tempDir", "--symbol=com.example.Foo", "--depth=2", "--interactive=true"),
+        )
+
+        assertTrue(command is CliCommand.Metrics)
+        val metrics = command as CliCommand.Metrics
+        assertEquals(MetricsSubcommand.GRAPH, metrics.subcommand)
+        assertEquals("com.example.Foo", metrics.symbol)
+        assertEquals(2, metrics.depth)
+        assertTrue(metrics.interactive)
     }
 
     @Test
